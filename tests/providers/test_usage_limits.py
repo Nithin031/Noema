@@ -1,5 +1,5 @@
 from noema.infrastructure.providers import ProviderChain, ProviderError
-from noema.infrastructure.providers import MODEL_LIMITS, QuotaLedger
+from noema.infrastructure.providers import MODEL_LIMITS, QuotaLedger, QuotaState
 
 
 class FakeProvider:
@@ -139,3 +139,25 @@ def test_embedding_usage_is_tracked_against_its_own_quota(tmp_path):
     snapshot = chain.usage()
     assert snapshot["embedding:{}".format(model)]["requests"] == 1000
     assert "llm:{}".format(model) not in snapshot
+
+
+# Regression: QuotaState day window must reset on a new calendar date (UTC),
+# not after 86400 monotonic seconds. Before the fix, `day_window_start` was
+# a monotonic timestamp so the reset happened relative to when the daemon
+# started, not at midnight UTC — conflicting with QuotaLedger's ISO date keys.
+def test_quota_state_day_window_resets_on_calendar_date_change():
+    from datetime import datetime, timezone
+    state = QuotaState(provider="gemini", model="gemini-3.5-flash",
+                       rpd_limit=10, rpm_limit=100, tpm_limit=1_000_000)
+    # Simulate the state being carried over from a past date with quota nearly
+    # exhausted: set the stored date to a known-past value.
+    state.day_window_date = "1970-01-01"
+    state.requests_today = 9
+    state.attempts_today = 9
+    # available() must detect the date change and reset before checking limits.
+    result = state.available()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert state.day_window_date == today
+    assert state.requests_today == 0
+    assert state.attempts_today == 0
+    assert result is True

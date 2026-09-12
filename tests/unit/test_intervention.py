@@ -107,4 +107,33 @@ def test_intervention_exposes_explicit_exact_tab_action_contract():
     }
     assert action["meme"]["top"] == "Implement PPO reward shaping"
     assert "LOCK_IN" in action["actions"]
+
+
+# Regression: execute() must NOT raise when handler is None and dry_run=False.
+# Before the fix, InterventionEngine.execute() raised ValueError in this case,
+# making interventions impossible in production (browser delivery is always
+# handler-less; the browser bridge receives via WebSocket, not a callback).
+def test_execute_without_handler_when_dry_run_false():
+    session, observation, intent, classification = context()
+    now = datetime(2026, 9, 4, 10, 10, tzinfo=timezone.utc)
+    engine = InterventionEngine(InterventionPolicy(dry_run=False))
+    planned = engine.consider(observation, session, intent, classification, now=now)
+    assert planned.status == InterventionStatus.PLANNED
+    executed = engine.execute(planned, handler=None, now=now)
+    assert executed.status == InterventionStatus.EXECUTED
+    assert "dry_run" not in executed.payload
+
+
+# Regression: execute() with dry_run=True must still mark dry_run in payload
+# and not call handler even when one is provided.
+def test_execute_dry_run_skips_handler_and_marks_payload():
+    session, observation, intent, classification = context()
+    now = datetime(2026, 9, 4, 10, 10, tzinfo=timezone.utc)
+    called = []
+    engine = InterventionEngine(InterventionPolicy(dry_run=True))
+    planned = engine.consider(observation, session, intent, classification, now=now)
+    executed = engine.execute(planned, handler=lambda i: called.append(i), now=now)
+    assert executed.status == InterventionStatus.EXECUTED
+    assert executed.payload.get("dry_run") is True
+    assert called == []
     assert planned.to_dict()["target"]["tab_id"] == "42"

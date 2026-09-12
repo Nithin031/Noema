@@ -28,6 +28,9 @@ def _json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+_request_local = threading.local()
+
+
 class NoemaApp:
     """Local-only HTTP surface around ``NoemaService``.
 
@@ -44,6 +47,26 @@ class NoemaApp:
         self._source_today_cache = None
         self._source_today_cached_at = 0.0
 
+    @staticmethod
+    def _cors_origin() -> str:
+        """Return the Access-Control-Allow-Origin value for the current request.
+
+        Only localhost, loopback, and browser-extension origins are
+        reflected back verbatim.  All other origins get the loopback
+        default.  The current request environ is read from the
+        per-thread local set in ``__call__``.
+        """
+        environ = getattr(_request_local, "environ", None) or {}
+        origin = environ.get("HTTP_ORIGIN", "")
+        if origin and (
+            origin.startswith("http://localhost")
+            or origin.startswith("http://127.0.0.1")
+            or origin.startswith("chrome-extension://")
+            or origin.startswith("moz-extension://")
+        ):
+            return origin
+        return "http://127.0.0.1:8765"
+
     def _response(self, start_response: Callable, status: HTTPStatus, payload: Any):
         body = _json_bytes(payload)
         start_response(
@@ -51,7 +74,8 @@ class NoemaApp:
             [
                 ("Content-Type", "application/json; charset=utf-8"),
                 ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*"),
+                ("Access-Control-Allow-Origin", self._cors_origin()),
+                ("Vary", "Origin"),
                 ("Access-Control-Allow-Headers", "Content-Type"),
                 ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
             ],
@@ -68,7 +92,9 @@ class NoemaApp:
         start_response(
             "200 OK",
             [("Content-Type", content_type), ("Content-Length", str(len(body))),
-             ("Cache-Control", "no-store"), ("Access-Control-Allow-Origin", "*")],
+             ("Cache-Control", "no-store"),
+             ("Access-Control-Allow-Origin", self._cors_origin()),
+             ("Vary", "Origin")],
         )
         return [body]
 
@@ -100,7 +126,8 @@ class NoemaApp:
             "200 OK",
             [("Content-Type", content_type + ("; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else "")),
              ("Content-Length", str(len(body))), ("Cache-Control", "no-cache"),
-             ("Access-Control-Allow-Origin", "*")],
+             ("Access-Control-Allow-Origin", self._cors_origin()),
+             ("Vary", "Origin")],
         )
         return [body]
 
@@ -128,7 +155,7 @@ class NoemaApp:
         """Product timezone for calendar windows; daemon config, else default."""
         daemon = getattr(self, "daemon", None)
         config = getattr(daemon, "config", None)
-        return str(getattr(config, "timezone_name", None) or "Asia/Kolkata")
+        return str(getattr(config, "timezone_name", None) or "UTC")
 
     def _source_today(self) -> Dict[str, Any]:
         """Use the source query API with AFK intersection for exact live view.
@@ -407,6 +434,7 @@ class NoemaApp:
 
     def __call__(self, environ: Dict[str, Any], start_response: Callable):
         """Time every request into telemetry, then dispatch unchanged."""
+        _request_local.environ = environ
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "/")
         started = time.perf_counter()

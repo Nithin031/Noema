@@ -388,9 +388,7 @@ class InterventionEngine:
     ) -> Intervention:
         if intervention.status != InterventionStatus.PLANNED:
             raise ValueError("only planned interventions can be executed")
-        if not self.policy.dry_run:
-            if handler is None:
-                raise ValueError("an intervention handler is required when dry_run is disabled")
+        if not self.policy.dry_run and handler is not None:
             handler(intervention)
         executed_at = now or datetime.now(timezone.utc)
         if executed_at.tzinfo is None:

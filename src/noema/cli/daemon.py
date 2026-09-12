@@ -206,6 +206,7 @@ def _intervention_engine(config: DaemonConfig) -> InterventionEngine:
     """Build the intervention policy from config (no code edits needed)."""
     return InterventionEngine(InterventionPolicy(
         enabled=True,
+        dry_run=not config.execute_interventions,
         mode=InterventionMode(config.intervention_mode),
         cooldown_seconds=config.intervention_cooldown_seconds,
         require_actionable=config.intervention_require_actionable,
