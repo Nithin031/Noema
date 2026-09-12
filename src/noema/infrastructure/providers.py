@@ -245,15 +245,15 @@ class QuotaLedger:
 
     Tracks ``(kind, model)`` pairs — ``kind`` is ``"llm"`` or
     ``"embedding"`` — counting requests and tokens against the current
-    quota day in ``day_timezone`` (default Asia/Kolkata, matching the
-    product timezone, so counters refresh at the user's 12am). State is
+    quota day in ``day_timezone`` (default UTC; set NOEMA_TIMEZONE to match
+    the user's local midnight so counters refresh at the right time). State is
     kept in a JSON file (atomically replaced on write) so a daemon restart
     cannot lose the daily counters and accidentally cross RPD. With
     ``path=None`` the ledger is memory-only (tests, throwaway processes).
     All methods are thread-safe.
     """
 
-    def __init__(self, path: Optional[Any] = None, day_timezone: str = "Asia/Kolkata"):
+    def __init__(self, path: Optional[Any] = None, day_timezone: str = "UTC"):
         self.path = str(Path(path).expanduser()) if path is not None else None
         try:
             self._zone = ZoneInfo(day_timezone) if ZoneInfo is not None else timezone.utc
@@ -1159,7 +1159,7 @@ class ProviderChain:
 
     def __init__(self, hosted: Optional[list] = None, ollama: Optional[OllamaProvider] = None,
                  usage_path: Optional[Any] = None, include_ollama: bool = False,
-                 day_timezone: str = "Asia/Kolkata", openrouter: Optional[list] = None,
+                 day_timezone: str = "UTC", openrouter: Optional[list] = None,
                  observer: Optional[Any] = None):
         self.providers = list(openrouter or []) + list(
             hosted or [GeminiProvider(model=model) for model in self.HOSTED_MODELS])

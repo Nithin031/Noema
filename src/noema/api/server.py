@@ -381,7 +381,7 @@ class NoemaApp:
 
     @staticmethod
     def _dashboard_window(query: Dict[str, List[str]]) -> tuple[datetime, datetime, str, str]:
-        timezone_name = query.get("timezone", ["Asia/Kolkata"])[0] or "Asia/Kolkata"
+        timezone_name = query.get("timezone", ["UTC"])[0] or "UTC"
         try:
             zone = ZoneInfo(timezone_name)
         except Exception as exc:
@@ -580,7 +580,7 @@ class NoemaApp:
                 requested_application = query.get("application", [None])[0]
                 if not requested_application:
                     raise ValueError("application is required")
-                timezone_name = query.get("timezone", ["Asia/Kolkata"])[0] or "Asia/Kolkata"
+                timezone_name = query.get("timezone", ["UTC"])[0] or "UTC"
                 zone = ZoneInfo(timezone_name)
                 selected = datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0)
                 start = coerce_timestamp(query.get("start", [selected.isoformat()])[0])

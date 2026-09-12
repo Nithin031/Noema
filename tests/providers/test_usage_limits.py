@@ -74,7 +74,7 @@ def test_ledger_rolls_over_at_local_midnight(tmp_path):
         "day": yesterday,
         "counts": {"llm:gemini-2.5-flash": {"requests": 20, "tokens": 999}},
     }))
-    ledger = QuotaLedger(usage)
+    ledger = QuotaLedger(usage, day_timezone="Asia/Kolkata")
     assert ledger.day != yesterday
     assert ledger.usage("llm", "gemini-2.5-flash") == {"requests": 0, "tokens": 0}
     assert ledger.check("llm", "gemini-2.5-flash", 700, 20) is True
@@ -92,7 +92,7 @@ def test_ledger_keeps_same_day_counts(tmp_path):
         "day": today,
         "counts": {"llm:gemini-2.5-flash": {"requests": 20, "tokens": 999}},
     }))
-    ledger = QuotaLedger(usage)
+    ledger = QuotaLedger(usage, day_timezone="Asia/Kolkata")
     assert ledger.day == today
     assert ledger.usage("llm", "gemini-2.5-flash") == {"requests": 20, "tokens": 999}
     assert ledger.check("llm", "gemini-2.5-flash", 700, 20) is False

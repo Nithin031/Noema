@@ -215,7 +215,7 @@ def test_daily_summary_filters_calendar_day_and_deduplicates_overlaps():
 
     zone = ZoneInfo("Asia/Kolkata")
     start = datetime(2026, 9, 6, tzinfo=zone)
-    summary = service.daily_summary(start.astimezone(ZoneInfo("UTC")), (start.replace(day=7)).astimezone(ZoneInfo("UTC")))
+    summary = service.daily_summary(start.astimezone(ZoneInfo("UTC")), (start.replace(day=7)).astimezone(ZoneInfo("UTC")), timezone_name="Asia/Kolkata")
 
     assert summary["date"] == "2026-09-06"
     assert summary["total_time"] == 90.0

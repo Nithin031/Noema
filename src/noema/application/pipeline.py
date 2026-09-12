@@ -407,7 +407,7 @@ class NoemaService:
         self,
         start: datetime,
         end: datetime,
-        timezone_name: str = "Asia/Kolkata",
+        timezone_name: str = "UTC",
     ) -> dict:
         """Aggregate one calendar window without counting overlapping events twice."""
 
@@ -911,7 +911,7 @@ class NoemaService:
                 ledger_snapshot = {}
             ledger_usage = ledger_snapshot
         day = datetime.now(timezone.utc).date().isoformat()
-        day_timezone = "Asia/Kolkata"
+        day_timezone = "UTC"
         latency_ms = {}
         latencies = getattr(provider, "model_latency_ms", None)
         if isinstance(latencies, dict):
