@@ -2260,11 +2260,10 @@ class NoemaService:
             meaningful = [item for item in meaningful if device in item.device_set]
         if meaningful:
             session_ids = {session.id for session in meaningful}
-            classifications = {
-                item.session_id: item
-                for item in self.store.query_classifications(limit=limit)
-                if item.session_id in session_ids
-            }
+            # Use a targeted query instead of fetching all classifications and
+            # filtering in Python; on long-running databases the global scan
+            # can miss classifications outside the most-recent `limit` rows.
+            classifications = self.store.query_classification_map(session_ids)
             alignments = {
                 item.session_id: item
                 for item in self.store.query_alignments(intent_id=intent_id, limit=limit)
@@ -2274,11 +2273,7 @@ class NoemaService:
 
         sessions = self.store.query_sessions(start, end, device, limit=limit)
         session_ids = {session.id for session in sessions}
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=limit)
-            if item.session_id in session_ids
-        }
+        classifications = self.store.query_classification_map(session_ids)
         alignments = {
             item.session_id: item
             for item in self.store.query_alignments(intent_id=intent_id, limit=limit)
@@ -2571,7 +2566,7 @@ class NoemaService:
         summarize: bool = False,
     ) -> list:
         raw = self.store.query_sessions(start=start, end=end, limit=limit)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=limit)}
+        classifications = self.store.query_classification_map([s.id for s in raw])
         alignments = {
             item.session_id: item
             for item in self.store.query_alignments(intent_id=intent_id, limit=limit)

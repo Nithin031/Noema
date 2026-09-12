@@ -1,8 +1,12 @@
+from datetime import datetime, timezone
+
 from noema.domain.behavior import BehaviorState, BehaviorEngine
 from noema.infrastructure.database import SQLiteStore
 from noema.application.classification import Classification
 from noema.domain.intent import AlignmentResult
 from noema.domain.sessions import ActivitySession
+from noema.api import NoemaService
+from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 
 
 def make_session(start, app, domain=None, duration=60):
@@ -89,3 +93,62 @@ def test_behavior_ignores_failed_classifications():
     observation = BehaviorEngine().evaluate([session], {session.id: failed})[0]
     assert observation.state == BehaviorState.NORMAL
     assert observation.actionable is False
+
+
+def test_evaluate_stored_behavior_finds_classification_beyond_global_query_limit():
+    # Regression: evaluate_stored_behavior used query_classifications(limit=N)
+    # which returns the N most recent rows globally.  On a database with more
+    # than N total classifications the target session's classification could
+    # fall outside that top-N slice, making the session appear unclassified
+    # and its behavior state collapse to NORMAL even when it was DISTRACTED.
+    # The fix uses query_classification_map(session_ids) instead.
+    store = SQLiteStore()
+    service = NoemaService(ActivityWatchAdapter(), store)
+
+    target = ActivitySession(
+        start="2026-09-04T10:00:00Z", end="2026-09-04T10:10:00Z",
+        device="laptop", app="Instagram", domain="instagram.com",
+        event_keys=("target",),
+    )
+    store.insert_session(target)
+    # Insert the target's classification with a very old timestamp so it is
+    # ranked below any fresh classification in a DESC-ordered global query.
+    old_stamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    store.insert_classification(Classification(
+        target.id, "entertainment", activity_type="browsing",
+        productivity="distracting", confidence=0.9,
+        classification_status="classified",
+        provider="gemini", model="gemini-test", source="gemini",
+        classified_at=old_stamp,
+    ))
+
+    # Insert enough newer dummy classifications to push the target beyond
+    # any small global limit.
+    query_limit = 20
+    for i in range(query_limit + 5):
+        dummy = ActivitySession(
+            start="2026-09-03T10:00:00Z", end="2026-09-03T10:01:00Z",
+            device="laptop", app="VS Code",
+            event_keys=("dummy-{}".format(i),),
+        )
+        store.insert_session(dummy)
+        store.insert_classification(Classification(
+            dummy.id, "neutral", activity_type="browsing",
+            productivity="neutral", confidence=0.5,
+            classification_status="classified",
+            provider="gemini", model="gemini-test", source="gemini",
+        ))
+
+    observations = service.evaluate_stored_behavior(
+        start="2026-09-04T09:00:00Z",
+        end="2026-09-04T11:00:00Z",
+        limit=query_limit,
+    )
+
+    by_id = {obs.session_id: obs for obs in observations}
+    assert target.id in by_id, "target session missing from behavior observations"
+    assert by_id[target.id].state == BehaviorState.DISTRACTED, (
+        "evaluate_stored_behavior missed the stored classification — "
+        "was it outside the top-{} global query window?".format(query_limit)
+    )
+    store.close()
