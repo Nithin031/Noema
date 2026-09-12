@@ -438,11 +438,6 @@ class NoemaService:
         if window_events:
             events = window_events
         sessions = self.store.query_sessions(start=effective_start, end=end, limit=100000)
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.classification_status == "classified" and item.source != "heuristic"
-        }
         # The live pipeline classifies meaningful sessions, so a raw session
         # without its own row inherits its parent meaningful verdict. Direct
         # rows always win. Without this the summary would show unclassified
@@ -453,6 +448,12 @@ class NoemaService:
         ):
             for raw_id in meaningful.activity_session_ids:
                 meaningful_parents.setdefault(raw_id, meaningful.id)
+        all_ids = [s.id for s in sessions] + list(meaningful_parents.values())
+        classifications = {
+            session_id: item
+            for session_id, item in self.store.query_classification_map(all_ids).items()
+            if item.classification_status == "classified" and item.source != "heuristic"
+        }
         for session in sessions:
             if session.id not in classifications and session.id in meaningful_parents:
                 parent = classifications.get(meaningful_parents[session.id])
@@ -681,8 +682,10 @@ class NoemaService:
 
         sessions = self.store.query_sessions(limit=10000)
         classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=10000)
+            session_id: item
+            for session_id, item in self.store.query_classification_map(
+                [s.id for s in sessions]
+            ).items()
             if item.classification_status == "classified" and item.source != "heuristic"
         }
         event_session_ids = {
@@ -774,17 +777,21 @@ class NoemaService:
         """Return logical ActivitySessions, not one row per watcher heartbeat."""
 
         sessions = self.store.query_sessions(start=start, end=end, limit=100000)
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.classification_status == "classified" and item.source != "heuristic"
-        }
         # The live pipeline classifies meaningful sessions, so a raw session
         # without its own row inherits its parent meaningful verdict.
         parent_of = {}
         for meaningful in self.store.query_meaningful_sessions(start=start, end=end, limit=100000):
             for raw_id in meaningful.activity_session_ids:
                 parent_of.setdefault(raw_id, meaningful.id)
+        # Fetch only the IDs we actually need: raw sessions + their meaningful
+        # parents. This prevents a global scan from missing classifications
+        # whose insertion timestamp is older than the global-limit cutoff.
+        all_ids = [s.id for s in sessions] + list(parent_of.values())
+        classifications = {
+            session_id: item
+            for session_id, item in self.store.query_classification_map(all_ids).items()
+            if item.classification_status == "classified" and item.source != "heuristic"
+        }
         rows = []
         for session in sessions:
             classification = classifications.get(session.id)
@@ -1746,13 +1753,10 @@ class NoemaService:
                 start=lookback_start, end=current, limit=100000)
         except (AttributeError, OSError, TypeError, ValueError):
             sessions = []
-        session_ids = {getattr(item, "id", None) for item in sessions}
         try:
-            class_map = {
-                item.session_id: item
-                for item in self.store.query_classifications(limit=100000)
-                if item.session_id in session_ids
-            }
+            class_map = self.store.query_classification_map(
+                [item.id for item in sessions if getattr(item, "id", None)]
+            )
         except (AttributeError, OSError, TypeError, ValueError):
             class_map = {}
         current_goal = None
@@ -1968,10 +1972,9 @@ class NoemaService:
             )
         }
         classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.session_id in session_ids
-            and item.classification_status == "classified"
+            session_id: item
+            for session_id, item in self.store.query_classification_map(list(session_ids)).items()
+            if item.classification_status == "classified"
             and item.source != "heuristic"
         }
         rows = []

@@ -441,7 +441,10 @@ class NoemaDaemon:
                 "last_ingest_at": _iso(last_ingest_at),
                 "last_activity_event": _iso(last_activity_event),
                 "tracked_data_freshness": freshness,
-                "ollama_connected": payload.get("provider_health") in {"available", "healthy"},
+                # "configured" is the health value for non-Ollama providers
+                # (hosted_chain, Gemini). Include it so ollama_connected
+                # correctly signals "AI is available" for all provider types.
+                "ollama_connected": payload.get("provider_health") in {"available", "healthy", "configured"},
                 "last_ollama_analysis": _iso(last_ollama_analysis),
                 "next_ollama_analysis": _iso(next_ollama_analysis),
                 "ollama_analysis_in_progress": self._ollama_analysis_in_progress,
@@ -615,11 +618,19 @@ class NoemaDaemon:
 
         current = coerce_timestamp(now) if now is not None else _utc_now()
         with self._pipeline_lock:
+            ingest = self._ingest_stage(current)
+            # Serialize the semantic stage with the background semantic worker so
+            # concurrent runs never double-call the model for the same sessions or
+            # overwrite a "classified" status with a later "failed" from a race.
+            with self._semantic_lock:
+                semantics = self._semantics_stage(current)
+            behavior = self._behavior_stage(current)
+            outcomes = self._outcome_stage(current)
             result = {
-                "ingest": self._ingest_stage(current),
-                "semantics": self._semantics_stage(current),
-                "behavior": self._behavior_stage(current),
-                "outcomes": self._outcome_stage(current),
+                "ingest": ingest,
+                "semantics": semantics,
+                "behavior": behavior,
+                "outcomes": outcomes,
             }
             if include_daily_report:
                 result["daily_report"] = self._daily_report_stage(current)
