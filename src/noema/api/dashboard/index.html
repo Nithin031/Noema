@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <meta name="description" content="Noema — local personal behavioral intelligence dashboard">
+  <title>Noema — Personal Behavioral Intelligence</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <div class="noise"></div><div class="aurora aurora-a"></div><div class="aurora aurora-b"></div>
+  <main class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-mark"><span class="brand-orbit">◈</span><div>NOEMA<small>PERSONAL BEHAVIORAL INTELLIGENCE</small></div></div>
+      <div class="side-label">Workspace</div>
+      <nav><a class="active" href="#overview"><b>⌁</b><span>Overview</span></a><a href="#aw-summary"><b>◫</b><span>Activity summary</span></a><a href="#tab-intelligence"><b>◎</b><span>Current tab</span></a><a href="#activities"><b>≡</b><span>Activity stream</span></a></nav>
+      <div class="side-bottom"><div class="local-badge"><span class="pulse-dot"></span>LOCAL CORE ONLINE</div><small>Nothing leaves this computer<br>Collector · Hosted AI · SQLite</small></div>
+    </aside>
+    <section class="content" id="overview">
+      <header class="topbar"><div><div class="crumb">NOEMA <span>/</span> OVERVIEW</div><h1>Activity overview</h1><p>Local activity, classification, and focus signals.</p></div><div class="top-actions"><div class="live-chip"><span class="pulse-dot"></span><span id="connection">Connecting…</span></div><button id="refresh" class="icon-button" title="Refresh">↻</button></div></header>
+
+      <!-- ═══ COLLECTOR LIVE SUMMARY ═══ -->
+      <section class="aw-hero panel" id="aw-summary">
+        <div class="aw-hero-left">
+          <div class="eyebrow"><span class="scan-line"></span>COLLECTOR · TODAY</div>
+          <div class="aw-time-display">
+            <strong id="aw-active-time">—</strong>
+            <small>active screen time</small>
+          </div>
+          <div class="aw-meta" id="aw-meta">Querying collector…</div>
+        </div>
+        <div class="aw-hero-right">
+          <div class="aw-section">
+            <h4>Top Applications</h4>
+            <div id="aw-top-apps" class="aw-bar-list">
+              <div class="muted">Loading…</div>
+            </div>
+          </div>
+          <div class="aw-section">
+            <h4>Top Window Titles</h4>
+            <div id="aw-top-titles" class="aw-title-list">
+              <div class="muted">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ SYSTEM + FOCUS ═══ -->
+      <section class="grid showcase-grid">
+        <article class="panel system-panel"><div class="panel-title"><div><span class="mini-kicker">SYSTEM PULSE</span><h3>Runtime health</h3></div><span id="daemon-dot" class="status-ring"></span></div><div id="health" class="rows"></div><div class="worker-strip"><span><i class="green-dot"></i> INGEST</span><span><i class="blue-dot"></i> SEMANTICS</span><span><i class="violet-dot"></i> OUTCOMES</span></div></article>
+        <article class="panel focus-panel"><div class="panel-title"><div><span class="mini-kicker">BEHAVIORAL SIGNAL</span><h3>Focus field</h3></div><span class="spark">✦</span></div><div class="focus-gauge"><div class="gauge-ring"><div class="gauge-inner"><strong id="focus-score">—</strong><small>FOCUS INDEX</small></div></div><div class="focus-copy"><strong id="focus-state">Observing</strong><span id="focus-caption">Waiting for the latest behavior state.</span><div class="meter"><i id="focus-meter"></i></div><small>Adaptive · refreshes every 30s</small></div></div></article>
+      </section>
+
+      <!-- ═══ BROWSER + AI ═══ -->
+      <section class="grid showcase-grid" id="tab-intelligence">
+        <article class="panel tab-panel"><div class="panel-title"><div><span class="mini-kicker">BROWSER BRIDGE</span><h3>Current tab</h3></div><button id="categorize" class="small-action">Categorize <span>✦</span></button></div><div id="tab" class="rows"><div class="empty-state"><span>◎</span><div>Waiting for Firefox bridge…<small>Reload the extension to stream exact tab identity.</small></div></div></div></article>
+        <article class="panel ai-panel" id="library"><div class="panel-title"><div><span class="mini-kicker">HOSTED / LOCAL MODEL</span><h3>Intelligence layer</h3></div><span class="model-badge" id="model-badge">LLAMA 3.2 · 3B</span></div><div id="intelligence" class="rows"></div><div class="ai-controls"><button id="run-ollama" class="primary glow-button"><span>✦</span> Run classification now</button><button id="stop-ollama" class="ghost-button">Stop model <span>⏻</span></button><span id="ollama-status" class="muted"></span></div><div class="ai-footer"><span class="ai-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>AI is on-demand · no background GPU load</span></div></article>
+      </section>
+
+      <!-- ═══ ACTIVITY TABLE ═══ -->
+      <section class="panel activity-panel" id="activities"><div class="panel-title"><div><span class="mini-kicker">RAW → MEANING</span><h3>Recent activity stream</h3></div><span id="updated" class="last-updated">Updating…</span></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Application</th><th>Domain</th><th>Duration</th><th>Category</th><th>Signal</th></tr></thead><tbody id="events"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table></div></section>
+
+      <!-- ═══ INTENT ═══ -->
+      <section class="panel intent-panel" id="intent"><div class="intent-icon">✦</div><div class="intent-copy"><span class="mini-kicker">DIRECT THE ENGINE</span><h3>What are you working toward?</h3><p>Give the intelligence layer context. It will align activity to this intent locally.</p></div><div class="intent-form"><input id="intent-input" placeholder="e.g. Finish the project documentation"><button id="save-intent" class="primary">Set intent <span>→</span></button><span id="intent-result" class="muted"></span></div></section>
+
+      <footer><span>NOEMA / LOCAL-FIRST</span><span>LOCALHOST ONLY · <a href="/api/daemon/health">API</a> · <a href="http://127.0.0.1:5600/" target="_blank">COLLECTOR</a></span></footer>
+    </section>
+  </main>
+  <script src="/dashboard.js"></script>
+</body>
+</html>

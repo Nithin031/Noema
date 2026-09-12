@@ -1,0 +1,33 @@
+build
+dist
+docs
+other
+old
+
+# Coverage
+*coverage*
+htmlcov
+
+# Editor/IDEs
+.idea
+*.swp
+
+# Python
+*venv*
+__pycache__
+.python-version
+
+# Misc
+.*cache
+.DS_Store
+.env
+
+# Noema local runtime artifacts
+logs/
+*.sqlite3
+
+# Dependencies (reinstallable; never commit)
+node_modules/
+
+# Noema docs ship with the repo (negate the broad legacy `docs` entry above)
+!src/noema/docs/
