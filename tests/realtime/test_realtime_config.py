@@ -119,10 +119,10 @@ def test_legacy_env_and_flag_still_configure_telemetry_url():
 
 
 def test_timezone_name_defaults_validates_and_round_trips():
-    assert DaemonConfig().timezone_name == "Asia/Kolkata"
-    assert DaemonConfig(timezone_name="UTC").timezone_name == "UTC"
-    assert DaemonConfig.from_mapping({"timezone_name": "UTC"}).timezone_name == "UTC"
-    assert DaemonConfig().to_dict()["timezone_name"] == "Asia/Kolkata"
+    assert DaemonConfig().timezone_name == "UTC"
+    assert DaemonConfig(timezone_name="America/New_York").timezone_name == "America/New_York"
+    assert DaemonConfig.from_mapping({"timezone_name": "America/New_York"}).timezone_name == "America/New_York"
+    assert DaemonConfig().to_dict()["timezone_name"] == "UTC"
     try:
         DaemonConfig(timezone_name="Not/AZone")
     except ValueError:

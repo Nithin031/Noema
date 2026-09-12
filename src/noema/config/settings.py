@@ -177,8 +177,9 @@ class DaemonConfig:
     session_short_event_seconds: float = 5.0
     session_merge_gap_seconds: float = 15.0
     # Product timezone (IANA name) for quota days, daily summaries, and
-    # calendar windows. Previously hardcoded to Asia/Kolkata everywhere.
-    timezone_name: str = "Asia/Kolkata"
+    # calendar windows. Defaults to UTC; set NOEMA_TIMEZONE to override
+    # (e.g. "America/New_York", "Europe/London", "Asia/Kolkata").
+    timezone_name: str = "UTC"
     # Failed attempts per session before it goes terminally failed (visible,
     # kept, never silently dropped). Retries back off 10/20/40/80/120 min.
     classification_max_retries: int = 5
@@ -320,7 +321,7 @@ class DaemonConfig:
         self.afk_media_exception = _boolean(self.afk_media_exception)
         self.session_short_event_seconds = _positive("session_short_event_seconds", self.session_short_event_seconds)
         self.session_merge_gap_seconds = _positive("session_merge_gap_seconds", self.session_merge_gap_seconds)
-        self.timezone_name = str(self.timezone_name or "Asia/Kolkata").strip()
+        self.timezone_name = str(self.timezone_name or "UTC").strip()
         try:
             ZoneInfo(self.timezone_name)
         except Exception as exc:

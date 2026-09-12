@@ -390,7 +390,10 @@ class QuotaState:
     rate_limited_count: int = 0
     last_rate_limited_at: Optional[str] = None
     minute_window_start: float = field(default_factory=time.monotonic)
-    day_window_start: float = field(default_factory=time.monotonic)
+    # Day window is a calendar date (UTC ISO string), not a monotonic
+    # elapsed counter. This aligns with QuotaLedger which uses ISO
+    # calendar dates as keys and prevents drift across midnight.
+    day_window_date: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     cooldown_until: float = 0.0
     consecutive_failures: int = 0
     last_error: Optional[str] = None
@@ -402,10 +405,11 @@ class QuotaState:
             self.requests_this_minute = self.tokens_this_minute = 0
             self.attempts_this_minute = 0
             self.minute_window_start = current
-        if current - self.day_window_start >= 86400:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self.day_window_date:
             self.requests_today = 0
             self.attempts_today = 0
-            self.day_window_start = current
+            self.day_window_date = today
         return (
             current >= self.cooldown_until
             and self.attempts_this_minute < self.rpm_limit

@@ -68,3 +68,45 @@ def test_daemon_gated_routes_are_503_without_daemon():
     status, payload = call_app(app, "POST", "/api/realtime/evaluate", body=b"{}")
     assert status.startswith("503")
     store.close()
+
+
+# Regression: CORS Access-Control-Allow-Origin must reflect the request Origin
+# only for localhost/loopback/extension origins; all other origins get the
+# loopback default. Before the fix, the server returned `*` for every origin
+# which would allow arbitrary web pages to read the daemon's API responses.
+def test_cors_reflects_localhost_origin_not_wildcard():
+    import io as _io
+    store, service = _service()
+    app = create_app(service)
+
+    def _call_with_origin(origin):
+        headers_out = {}
+        def start_response(status, headers):
+            headers_out.update(dict(headers))
+        environ = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/status",
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": "0",
+            "wsgi.input": _io.BytesIO(b""),
+            "HTTP_ORIGIN": origin,
+        }
+        list(app(environ, start_response))
+        return headers_out.get("Access-Control-Allow-Origin", "")
+
+    # Localhost and loopback must be reflected verbatim.
+    assert _call_with_origin("http://localhost:3000") == "http://localhost:3000"
+    assert _call_with_origin("http://127.0.0.1:5173") == "http://127.0.0.1:5173"
+    # Extension origins must be reflected verbatim.
+    assert _call_with_origin("chrome-extension://abc123") == "chrome-extension://abc123"
+    assert _call_with_origin("moz-extension://xyz789") == "moz-extension://xyz789"
+    # Arbitrary web origins must NOT be reflected; fallback to loopback default.
+    arbitrary = _call_with_origin("https://evil.example.com")
+    assert arbitrary != "https://evil.example.com"
+    assert arbitrary != "*"
+    assert "127.0.0.1" in arbitrary
+    # Requests with no Origin header get the loopback default (not a wildcard).
+    no_origin = _call_with_origin("")
+    assert no_origin != "*"
+    assert "127.0.0.1" in no_origin
+    store.close()
