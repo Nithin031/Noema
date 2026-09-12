@@ -2642,7 +2642,7 @@ class NoemaService:
         sessions = self.store.query_meaningful_sessions(start=intervention.created_at, limit=100000)
         if not sessions:
             sessions = self.store.query_sessions(start=intervention.created_at, limit=100000)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=100000)}
+        classifications = self.store.query_classification_map([s.id for s in sessions])
         outcome = self.outcome_tracker.measure(intervention, sessions, classifications, now, meme_id)
         with self._observe_db("outcome_write") as state:
             self.store.insert_outcome(outcome)
@@ -2665,7 +2665,7 @@ class NoemaService:
         sessions = self.store.query_meaningful_sessions(limit=limit)
         if not sessions:
             sessions = self.store.query_sessions(limit=limit)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=limit)}
+        classifications = self.store.query_classification_map([s.id for s in sessions])
         observations = {item.session_id: item for item in self.store.query_behavior_observations(limit=limit)}
         memories = self.memory_engine.derive_distraction_patterns(sessions, classifications, observations)
         for memory in memories:
