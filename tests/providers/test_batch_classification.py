@@ -8,6 +8,7 @@ from noema.infrastructure.providers import (
     ProviderError,
 )
 from noema.domain.sessions import Sessionizer
+from noema.domain.meaningful.models import MeaningfulSession
 
 
 def make_session(tag, title="Window work", domain="example.com"):
@@ -244,3 +245,49 @@ def test_single_session_never_uses_batch():
     assert chain.batch_calls == 0
     assert chain.single_calls == 1
     assert result.activity == "Single fallback"
+
+
+def test_cache_does_not_contaminate_across_different_activity_sessions():
+    # Two sessions with identical app/title/domain must each get their own
+    # classification — the cache key must include session.id so sessions
+    # with identical observable fields don't share a cache slot.
+    s1 = make_session("dup-1", title="Dashboard", domain="app.example.com")
+    s2 = make_session("dup-2", title="Dashboard", domain="app.example.com")
+    payloads = {
+        s1.id: valid_item(s1.id, "productive"),
+        s2.id: valid_item(s2.id, "distractive"),
+    }
+    chain = FakeChain(payloads=payloads)
+    classifier = Classifier(provider=chain)
+
+    results = classifier.classify_many([s1, s2])
+
+    by_id = {r.session_id: r for r in results}
+    assert by_id[s1.id].category == "productive"
+    assert by_id[s2.id].category == "distractive"
+    # Both sessions were independently classified — no cache sharing
+    assert chain.batch_calls == 1
+
+
+def test_cache_does_not_contaminate_meaningful_sessions_with_same_project():
+    # MeaningfulSessions that have no app/title/domain (those are ActivitySession
+    # fields) but share the same primary_project must NOT share a cache slot.
+    # Previously they all resolved to the same cache key (all fields None).
+    m1 = MeaningfulSession(
+        start_time="2026-09-06T08:00:00Z", end_time="2026-09-06T08:30:00Z",
+        device_set=("laptop",), primary_project="work",
+        activity_session_ids=("a1",),
+    )
+    m2 = MeaningfulSession(
+        start_time="2026-09-06T09:00:00Z", end_time="2026-09-06T09:30:00Z",
+        device_set=("laptop",), primary_project="work",
+        activity_session_ids=("a2",),
+    )
+
+    # Verify the sessions have different IDs (distinct objects)
+    assert m1.id != m2.id
+
+    # Verify cache keys differ even though observable fields are identical
+    key1 = Classifier._cache_key(m1)
+    key2 = Classifier._cache_key(m2)
+    assert key1 != key2, "Different MeaningfulSessions must not share a cache key"

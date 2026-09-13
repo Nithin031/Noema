@@ -540,7 +540,14 @@ class Classifier:
 
     @staticmethod
     def _cache_key(session: Any, recent_context: Optional[Iterable[Mapping[str, Any]]] = None) -> str:
+        # session.id is included so that two different sessions with identical
+        # observable fields (same app/title/domain or same project/topic on a
+        # MeaningfulSession) never share a cache entry.  Without this,
+        # MeaningfulSessions that lack app/title/domain all hash identically
+        # when their primary_project/topic are also None, and the first
+        # session's verdict contaminates every subsequent one.
         evidence = {
+            "session_id": getattr(session, "id", None),
             "app": getattr(session, "app", None),
             "title": getattr(session, "title", None),
             "domain": getattr(session, "domain", None),

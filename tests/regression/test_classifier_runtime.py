@@ -140,7 +140,7 @@ def test_today_and_recent_activity_are_session_scoped():
     )
     app = create_app(service)
 
-    status, activities = call_app(app, "/api/dashboard/recent-activity?range=today")
+    status, activities = call_app(app, "/api/dashboard/recent-activity?range=today&timezone=Asia%2FKolkata")
     assert status.startswith("200")
     assert len(activities["activities"]) == 1
     assert activities["activities"][0]["title"] == "Instagram"

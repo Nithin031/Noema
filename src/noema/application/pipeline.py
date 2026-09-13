@@ -407,7 +407,7 @@ class NoemaService:
         self,
         start: datetime,
         end: datetime,
-        timezone_name: str = "Asia/Kolkata",
+        timezone_name: str = "UTC",
     ) -> dict:
         """Aggregate one calendar window without counting overlapping events twice."""
 
@@ -438,11 +438,6 @@ class NoemaService:
         if window_events:
             events = window_events
         sessions = self.store.query_sessions(start=effective_start, end=end, limit=100000)
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.classification_status == "classified" and item.source != "heuristic"
-        }
         # The live pipeline classifies meaningful sessions, so a raw session
         # without its own row inherits its parent meaningful verdict. Direct
         # rows always win. Without this the summary would show unclassified
@@ -453,6 +448,12 @@ class NoemaService:
         ):
             for raw_id in meaningful.activity_session_ids:
                 meaningful_parents.setdefault(raw_id, meaningful.id)
+        all_ids = [s.id for s in sessions] + list(meaningful_parents.values())
+        classifications = {
+            session_id: item
+            for session_id, item in self.store.query_classification_map(all_ids).items()
+            if item.classification_status == "classified" and item.source != "heuristic"
+        }
         for session in sessions:
             if session.id not in classifications and session.id in meaningful_parents:
                 parent = classifications.get(meaningful_parents[session.id])
@@ -681,8 +682,10 @@ class NoemaService:
 
         sessions = self.store.query_sessions(limit=10000)
         classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=10000)
+            session_id: item
+            for session_id, item in self.store.query_classification_map(
+                [s.id for s in sessions]
+            ).items()
             if item.classification_status == "classified" and item.source != "heuristic"
         }
         event_session_ids = {
@@ -774,17 +777,21 @@ class NoemaService:
         """Return logical ActivitySessions, not one row per watcher heartbeat."""
 
         sessions = self.store.query_sessions(start=start, end=end, limit=100000)
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.classification_status == "classified" and item.source != "heuristic"
-        }
         # The live pipeline classifies meaningful sessions, so a raw session
         # without its own row inherits its parent meaningful verdict.
         parent_of = {}
         for meaningful in self.store.query_meaningful_sessions(start=start, end=end, limit=100000):
             for raw_id in meaningful.activity_session_ids:
                 parent_of.setdefault(raw_id, meaningful.id)
+        # Fetch only the IDs we actually need: raw sessions + their meaningful
+        # parents. This prevents a global scan from missing classifications
+        # whose insertion timestamp is older than the global-limit cutoff.
+        all_ids = [s.id for s in sessions] + list(parent_of.values())
+        classifications = {
+            session_id: item
+            for session_id, item in self.store.query_classification_map(all_ids).items()
+            if item.classification_status == "classified" and item.source != "heuristic"
+        }
         rows = []
         for session in sessions:
             classification = classifications.get(session.id)
@@ -911,7 +918,7 @@ class NoemaService:
                 ledger_snapshot = {}
             ledger_usage = ledger_snapshot
         day = datetime.now(timezone.utc).date().isoformat()
-        day_timezone = "Asia/Kolkata"
+        day_timezone = "UTC"
         latency_ms = {}
         latencies = getattr(provider, "model_latency_ms", None)
         if isinstance(latencies, dict):
@@ -1746,13 +1753,10 @@ class NoemaService:
                 start=lookback_start, end=current, limit=100000)
         except (AttributeError, OSError, TypeError, ValueError):
             sessions = []
-        session_ids = {getattr(item, "id", None) for item in sessions}
         try:
-            class_map = {
-                item.session_id: item
-                for item in self.store.query_classifications(limit=100000)
-                if item.session_id in session_ids
-            }
+            class_map = self.store.query_classification_map(
+                [item.id for item in sessions if getattr(item, "id", None)]
+            )
         except (AttributeError, OSError, TypeError, ValueError):
             class_map = {}
         current_goal = None
@@ -1968,10 +1972,9 @@ class NoemaService:
             )
         }
         classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=100000)
-            if item.session_id in session_ids
-            and item.classification_status == "classified"
+            session_id: item
+            for session_id, item in self.store.query_classification_map(list(session_ids)).items()
+            if item.classification_status == "classified"
             and item.source != "heuristic"
         }
         rows = []
@@ -2260,11 +2263,10 @@ class NoemaService:
             meaningful = [item for item in meaningful if device in item.device_set]
         if meaningful:
             session_ids = {session.id for session in meaningful}
-            classifications = {
-                item.session_id: item
-                for item in self.store.query_classifications(limit=limit)
-                if item.session_id in session_ids
-            }
+            # Use a targeted query instead of fetching all classifications and
+            # filtering in Python; on long-running databases the global scan
+            # can miss classifications outside the most-recent `limit` rows.
+            classifications = self.store.query_classification_map(session_ids)
             alignments = {
                 item.session_id: item
                 for item in self.store.query_alignments(intent_id=intent_id, limit=limit)
@@ -2274,11 +2276,7 @@ class NoemaService:
 
         sessions = self.store.query_sessions(start, end, device, limit=limit)
         session_ids = {session.id for session in sessions}
-        classifications = {
-            item.session_id: item
-            for item in self.store.query_classifications(limit=limit)
-            if item.session_id in session_ids
-        }
+        classifications = self.store.query_classification_map(session_ids)
         alignments = {
             item.session_id: item
             for item in self.store.query_alignments(intent_id=intent_id, limit=limit)
@@ -2571,7 +2569,7 @@ class NoemaService:
         summarize: bool = False,
     ) -> list:
         raw = self.store.query_sessions(start=start, end=end, limit=limit)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=limit)}
+        classifications = self.store.query_classification_map([s.id for s in raw])
         alignments = {
             item.session_id: item
             for item in self.store.query_alignments(intent_id=intent_id, limit=limit)
@@ -2647,7 +2645,7 @@ class NoemaService:
         sessions = self.store.query_meaningful_sessions(start=intervention.created_at, limit=100000)
         if not sessions:
             sessions = self.store.query_sessions(start=intervention.created_at, limit=100000)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=100000)}
+        classifications = self.store.query_classification_map([s.id for s in sessions])
         outcome = self.outcome_tracker.measure(intervention, sessions, classifications, now, meme_id)
         with self._observe_db("outcome_write") as state:
             self.store.insert_outcome(outcome)
@@ -2670,7 +2668,7 @@ class NoemaService:
         sessions = self.store.query_meaningful_sessions(limit=limit)
         if not sessions:
             sessions = self.store.query_sessions(limit=limit)
-        classifications = {item.session_id: item for item in self.store.query_classifications(limit=limit)}
+        classifications = self.store.query_classification_map([s.id for s in sessions])
         observations = {item.session_id: item for item in self.store.query_behavior_observations(limit=limit)}
         memories = self.memory_engine.derive_distraction_patterns(sessions, classifications, observations)
         for memory in memories:

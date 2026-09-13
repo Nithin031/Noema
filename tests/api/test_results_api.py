@@ -92,3 +92,51 @@ def test_recent_activity_supports_rolling_24h_range():
     assert payload["range"] == "24h"
     assert isinstance(payload["activities"], list)
     service.store.close()
+
+
+def test_classification_status_quota_carries_local_estimate_flag():
+    """requestsRemaining in /api/classification/status is a local ledger value.
+
+    The field must never be presented as exact provider-authoritative quota.
+    Regression for the missing isLocalEstimate / quotaScope labels that let
+    callers tell the difference between a model-specific cap and a shared guard.
+    """
+    import tempfile
+    import os
+    from noema.runtime import NoemaDaemon, DaemonConfig
+
+    ollama = OfflineHost()
+    ollama.name = "ollama"
+    ollama.model = "llama3.2:3b"
+    chain = ProviderChain(hosted=[OfflineHost()], ollama=ollama, usage_path=None)
+    service = NoemaService(
+        ActivityWatchAdapter(),
+        SQLiteStore(),
+        classifier=Classifier(provider=chain),
+    )
+    lock_path = tempfile.mktemp(suffix=".lock")
+    try:
+        config = DaemonConfig(db_path=":memory:", lock_path=lock_path)
+        daemon = NoemaDaemon(service, config)
+        app = create_app(service, daemon=daemon)
+
+        status, payload = call_app(app, "/api/classification/status")
+
+        assert status.startswith("200")
+        quota = payload["quota"]
+        # Must carry explicit local-estimate flag — the value is never
+        # provider-authoritative.
+        assert quota.get("isLocalEstimate") is True, (
+            "quota.isLocalEstimate must be True; got {}".format(quota)
+        )
+        # Must carry scope so callers know whether the limit is per-model or a
+        # conservative shared guard.
+        assert "quotaScope" in quota, (
+            "quota.quotaScope must be present; got {}".format(quota)
+        )
+    finally:
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
+        service.store.close()

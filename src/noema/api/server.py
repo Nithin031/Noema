@@ -336,7 +336,12 @@ class NoemaApp:
         last_provider = getattr(provider, "last_provider", None) or getattr(provider, "name", None)
         last_model = getattr(provider, "last_model", None) or getattr(provider, "model", None)
         quota_table = self.service.provider_quotas()
-        quota = {"model": last_model, "requestsUsed": None, "requestsLimit": None, "requestsRemaining": None}
+        # requestsRemaining is a local ledger estimate — the provider's actual
+        # remaining quota may differ when the API key is shared or used outside
+        # this daemon. isLocalEstimate: true makes this explicit to callers;
+        # quotaScope tells them whether limits are per-model or shared guards.
+        quota = {"model": last_model, "requestsUsed": None, "requestsLimit": None,
+                 "requestsRemaining": None, "isLocalEstimate": True, "quotaScope": None}
         for row in quota_table.get("models", []):
             if last_model and row.get("model") != last_model:
                 continue
@@ -345,6 +350,8 @@ class NoemaApp:
                 "requestsUsed": (row.get("rpd") or {}).get("used"),
                 "requestsLimit": (row.get("rpd") or {}).get("limit"),
                 "requestsRemaining": (row.get("rpd") or {}).get("left"),
+                "isLocalEstimate": True,
+                "quotaScope": row.get("quota_scope"),
             }
             break
         worker_error = getattr(worker, "last_error", None)
@@ -381,7 +388,7 @@ class NoemaApp:
 
     @staticmethod
     def _dashboard_window(query: Dict[str, List[str]]) -> tuple[datetime, datetime, str, str]:
-        timezone_name = query.get("timezone", ["Asia/Kolkata"])[0] or "Asia/Kolkata"
+        timezone_name = query.get("timezone", ["UTC"])[0] or "UTC"
         try:
             zone = ZoneInfo(timezone_name)
         except Exception as exc:
@@ -580,7 +587,7 @@ class NoemaApp:
                 requested_application = query.get("application", [None])[0]
                 if not requested_application:
                     raise ValueError("application is required")
-                timezone_name = query.get("timezone", ["Asia/Kolkata"])[0] or "Asia/Kolkata"
+                timezone_name = query.get("timezone", ["UTC"])[0] or "UTC"
                 zone = ZoneInfo(timezone_name)
                 selected = datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0)
                 start = coerce_timestamp(query.get("start", [selected.isoformat()])[0])
