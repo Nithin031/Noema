@@ -2,11 +2,14 @@
 
 > Scope of this change: goal **relevance** and **alignment** are now first-class,
 > three-valued, and separate from the raw semantic category. Uncertainty can no
-> longer masquerade as distraction.
-> Verified against the test suite: **373 passed, 2 skipped, 2 failed**. The two
-> failures are environmental only — `google-genai is not installed` in this CI
-> container — and are identical to the pre-change baseline (357 → 373 with the
-> 16 new Semantic V2 tests). Date: 2026-09-13. Branch: `claude/serene-mccarthy-9n4kax`.
+> longer masquerade as distraction — neither as a false ALIGNED that hides drift
+> nor as a false MISALIGNED that invents it (see the relevance audit fixes F1/F2
+> in §E and `SEMANTIC_V2_RELEVANCE_AUDIT.md`).
+> Verified against the test suite: **377 passed, 2 skipped, 0 failed** with the
+> repo-declared `google-genai` installed; **375 / 2 / 2** without it, where the 2
+> failures are environmental only (`google-genai is not installed`) and proven
+> identical to the pre-change baseline commit `78a9101`. Date: 2026-09-13.
+> Branch: `claude/serene-mccarthy-9n4kax`.
 
 This document extends, and does not replace, `CURRENT_SYSTEM_STATUS.md`. The
 telemetry, sessionization, classification, behavior, realtime, intervention,
@@ -117,24 +120,35 @@ YouTube, communication, and games are contextual, not inherently anything.
    (title/app/domain + classification topic/project/category/activity_type).
    **Stop words are removed from both sides** so a shared "for"/"the" cannot fake
    a relationship.
-2. `overlap_score = |overlap| / |intent_tokens|`; `score = overlap_score·0.60 +
-   productivity_bonus(0.15) + verb_compatibility_bonus(0.25)`.
-3. Decide:
-   - `score ≥ threshold (0.35)` → **aligned**; relevance **high** (`score ≥ 0.6`) else **medium**.
-   - `score < threshold` but some meaningful overlap → **unknown**; relevance **low** (borderline).
-   - no overlap **and** a confident, well-evidenced *classified* verdict
-     (`confidence ≥ 0.5`, `evidence_quality ∈ {strong, moderate}`) → **misaligned**; relevance **none**.
-   - no overlap and thin/absent/failed evidence → **unknown**; relevance **unknown**.
+2. `overlap_score = |overlap| / |intent_tokens|`. Bonuses only apply **when
+   there is genuine overlap** (audit fix F1): with overlap,
+   `score = min(1, overlap_score·0.60 + productivity_bonus(0.15) +
+   verb_compatibility_bonus(0.25))`; with no overlap, `score = 0`.
+3. Decide (threshold 0.35):
+   - `score ≥ 0.35` → **aligned**; relevance **high** (`score ≥ 0.6`) else **medium**.
+   - `score < 0.35` but some overlap → **unknown**; relevance **low** (borderline).
+   - no overlap **and** a *distractive* verdict (category `distractive` or
+     productivity `distracting`) that is confident and well-evidenced
+     (`confidence ≥ 0.5`, `evidence_quality ∈ {strong, moderate}`) → **misaligned**;
+     relevance **none** (audit fix F2).
+   - everything else (no overlap, or productive-but-unmatched, or thin/failed
+     evidence) → **unknown**; relevance **unknown**.
 
 Consequences (all covered by tests):
 
-- **Productive ≠ aligned.** A productive-but-off-goal activity with strong
-  evidence is `misaligned`, relevance `none`.
+- **Productive ≠ aligned.** A productive activity with no goal overlap is never
+  aligned; it is `unknown` (it may be relevant but worded differently, so we do
+  not guess).
+- **Bonuses cannot manufacture alignment** (F1). "Productive work whose type
+  matches a goal verb" with zero topical overlap is `unknown`, not a false
+  `aligned` that would hide drift.
 - **Distractive ≠ misaligned without evidence.** A distractive-looking activity
-  with thin evidence is `unknown`, not `misaligned`.
-- **Positive relevance is directly observable** (token overlap), so `aligned`
-  needs no classification; **rejecting** an activity as unrelated needs a real,
-  confident verdict.
+  with thin evidence is `unknown`.
+- **Misaligned needs positive evidence of unrelatedness** (F2): a confident,
+  well-evidenced *distractive* verdict with no goal overlap. Confident
+  *productive* work that merely didn't share a token stays `unknown`, so
+  relevant-but-differently-worded work (YOLO11 docs for a YOLO goal; a MuJoCo
+  quadruped sim for a Unitree A1 goal) never produces **false drift**.
 - **No goal → unknown.** Callers pass no alignment (or `AlignmentResult.unknown`).
 
 ---
@@ -179,22 +193,28 @@ stay failures; no fake neutral is ever synthesized locally.
 
 ## H. Tests
 
-- **Full suite:** 373 passed, 2 skipped, 2 failed.
-- **New (this change):** 16 in `tests/regression/test_semantic_v2.py`.
-- **Failures:** 2 — `test_gemini_thinking_level_flows_to_sdk_and_retries_ambiguous`
-  and `test_gemini_keeps_first_verdict_when_medium_retry_fails`, both failing
-  only with `ProviderError: google-genai is not installed`. Identical to the
-  pre-change baseline; unrelated to this work.
+- **Full suite:** 377 passed, 2 skipped, 0 failed **with the repo-declared
+  `google-genai` present**. Without it (bare CI container), the two Gemini SDK
+  tests fail at `from google import genai` → 375 passed / 2 skipped / 2 failed.
+  Those 2 failures were rigorously verified to be pre-existing and environmental
+  (same 2 tests fail identically on the pre-V2 baseline commit `78a9101`; no
+  Semantic V2 test imports google-genai).
+- **New (Semantic V2 + relevance fixes):** 18 in `tests/regression/test_semantic_v2.py`.
+- **Failures:** `test_gemini_thinking_level_flows_to_sdk_and_retries_ambiguous`
+  and `test_gemini_keeps_first_verdict_when_medium_retry_fails` fail **only** when
+  `google-genai` (a declared dependency) is not installed. Unrelated to this work.
 
 New test coverage maps to the acceptance criteria:
 
 | Test | Criterion |
 |---|---|
 | `test_goal_related_coding_is_aligned_high_relevance` | relevant productive → aligned/high |
-| `test_productive_but_unrelated_is_misaligned_not_aligned` | productive ≠ aligned |
+| `test_productive_but_unrelated_is_unknown_not_aligned` | productive ≠ aligned; productive-unmatched → unknown (F2) |
+| `test_bonuses_cannot_manufacture_alignment_without_overlap` | bonuses can't fake ALIGNED without overlap (F1) |
+| `test_productive_unmatched_work_does_not_drift_end_to_end` | relevant-but-unmatched → unknown → no false drift (F2) |
 | `test_distractive_without_evidence_is_unknown_not_misaligned` | distractive ≠ misaligned without evidence |
 | `test_insufficient_evidence_is_unknown` | insufficient evidence → unknown |
-| `test_clearly_unrelated_with_strong_evidence_is_misaligned` | unrelated + evidence → misaligned |
+| `test_clearly_unrelated_with_strong_evidence_is_misaligned` | distractive unrelated + evidence → misaligned |
 | `test_no_goal_produces_unknown_alignment_and_no_drift` | no goal → unknown alignment, no drift |
 | `test_unknown_alignment_does_not_drift` | unknown ≠ distractive |
 | `test_explicit_misaligned_drifts` | misaligned → DRIFTING |
@@ -216,9 +236,23 @@ New test coverage maps to the acceptance criteria:
   relevance frequently and correctly stays `unknown`.
 - **Deterministic (not semantic) relevance.** `GoalAligner` uses token overlap
   plus verb compatibility, not an LLM. This is intentional (inspectable, no model
-  can trigger actions), but it can miss synonym/paraphrase relevance (e.g. a goal
-  "object detection" vs. a title "bounding boxes"). Such cases land in `unknown`,
-  not a wrong verdict.
+  can trigger actions), but it misses synonym/paraphrase/acronym relevance
+  (e.g. goal "Unitree A1" vs. activity "MuJoCo quadruped"; "yolo" vs "yolo11").
+  Per the F1/F2 fixes these land in **`unknown`** (no drift, no false focus), not
+  a wrong verdict — a deliberate conservatism, not full coverage. See
+  `SEMANTIC_V2_RELEVANCE_AUDIT.md`.
+- **DRIFTING is effectively not emitted by deterministic alignment.** Because
+  MISALIGNED now requires a *distractive* verdict (which the behavior engine
+  already routes to the stronger `DISTRACTED` state), the `DRIFTING` state is not
+  reached from `GoalAligner` output in practice. This is intentional: we do not
+  deterministically assert "you are drifting on productive work" when we cannot
+  reliably tell relevant-but-unmatched from truly-unrelated. `DRIFTING` remains
+  in the state machine for a future semantic aligner or an explicit misaligned
+  verdict.
+- **Residual generic-word overlap.** A single shared generic token (e.g.
+  "system") can still cross the alignment bar (goal "recommendation system" vs.
+  "System Restore" → aligned). A curated generic-tech stop-list would fix this
+  but risks new false negatives, so it was left out of the F1/F2 scope.
 - **Goal availability.** With no active `Intent`, all alignment is `unknown`; the
   system does not infer goals from telemetry.
 - **Ambiguous multi-goal selection.** The authoritative goal is the most recent

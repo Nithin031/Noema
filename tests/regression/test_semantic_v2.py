@@ -87,9 +87,13 @@ def test_goal_related_coding_is_aligned_high_relevance():
     assert result.goal_relevance in {"high", "medium"}
 
 
-def test_productive_but_unrelated_is_misaligned_not_aligned():
-    # Productive in general (reading an ML article) but nothing to do with the
-    # active goal, with a confident well-evidenced verdict -> MISALIGNED.
+def test_productive_but_unrelated_is_unknown_not_aligned():
+    # Productive in general (reading an ML article) but no lexical overlap with
+    # the active goal. Audit fix F2: because matching is lexical-only, "confident
+    # productive work that shared no token" is genuinely ambiguous — it may be a
+    # sub-topic of the goal worded differently — so it must be UNKNOWN, never a
+    # false ALIGNED (which would hide drift) and never a false MISALIGNED (which
+    # would create drift). Productive != aligned is still upheld.
     session = _session(app="Chrome", domain="arxiv.org",
                        title="A survey of reinforcement learning for finance")
     classification = _classified(
@@ -97,9 +101,44 @@ def test_productive_but_unrelated_is_misaligned_not_aligned():
         topic="reinforcement learning finance", project=None,
         confidence=0.9, evidence_quality="strong")
     result = GoalAligner().align(session, ROBOTICS_GOAL, classification)
-    assert result.relation == RELATION_MISALIGNED
-    assert result.goal_relevance == RELEVANCE_NONE
+    assert result.relation == RELATION_UNKNOWN
     assert result.aligned is False
+
+
+def test_bonuses_cannot_manufacture_alignment_without_overlap():
+    # Audit fix F1: productivity (0.15) + verb-compatibility (0.25) = 0.40 would
+    # cross the 0.35 bar on their own. A productive "study"/reading session with
+    # ZERO topical overlap must NOT be ALIGNED — that false ALIGNED silently
+    # hides drift.
+    goal = Intent(text="Study Power Electronics", goal="Study Power Electronics",
+                  keywords=("power", "electronics"),
+                  created_at=datetime(2026, 9, 4, tzinfo=timezone.utc))
+    session = _session(app="Firefox", domain="wikipedia.org",
+                       title="A history of the Roman Empire")
+    classification = _classified(
+        session, category="productive", productivity="productive",
+        activity_type="reading", topic="roman history",
+        confidence=0.9, evidence_quality="strong")
+    result = GoalAligner().align(session, goal, classification)
+    assert result.relation != RELATION_ALIGNED
+    assert result.relation == RELATION_UNKNOWN
+
+
+def test_productive_unmatched_work_does_not_drift_end_to_end():
+    # F1 + F2 + behavior: productive, confident, but no goal overlap -> UNKNOWN
+    # alignment -> NORMAL (never DRIFTING). Guards against false drift on
+    # relevant-but-differently-worded work (the YOLO11 / MuJoCo class).
+    session = _session(app="Chrome", domain="docs.ultralytics.com",
+                       title="YOLO11 segmentation documentation")
+    classification = _classified(
+        session, category="development", productivity="productive",
+        activity_type="technical_research", topic="yolo11 segmentation",
+        confidence=0.9, evidence_quality="strong")
+    alignment = GoalAligner().align(session, ROBOTICS_GOAL, classification)
+    assert alignment.relation == RELATION_UNKNOWN
+    obs = BehaviorEngine().evaluate(
+        [session], {session.id: classification}, {session.id: alignment})[0]
+    assert obs.state != BehaviorState.DRIFTING
 
 
 def test_distractive_without_evidence_is_unknown_not_misaligned():
@@ -130,6 +169,7 @@ def test_clearly_unrelated_with_strong_evidence_is_misaligned():
         confidence=0.85, evidence_quality="strong")
     result = GoalAligner().align(session, ROBOTICS_GOAL, classification)
     assert result.relation == RELATION_MISALIGNED
+    assert result.goal_relevance == RELEVANCE_NONE
 
 
 # --- behavior downstream --------------------------------------------------
