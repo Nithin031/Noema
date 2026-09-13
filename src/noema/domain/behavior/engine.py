@@ -46,7 +46,14 @@ class BehaviorEngine:
             return BehaviorState.BREAK
         if productivity == "distracting":
             return BehaviorState.DISTRACTED
-        if alignment and not alignment.aligned:
+        # DRIFTING requires an *explicit* misaligned verdict. A merely
+        # non-aligned result — thin evidence, no goal, or a borderline
+        # relationship — carries relation "unknown" and must NOT drift:
+        # uncertainty is never treated as distraction. (Legacy results that
+        # only set aligned=False derive relation "unknown", so they too stay
+        # NORMAL rather than falsely drifting.)
+        if alignment is not None and getattr(
+                alignment, "relation", None) == "misaligned":
             return BehaviorState.DRIFTING
         if alignment and alignment.aligned and productivity == "productive":
             if previous in {BehaviorState.DISTRACTED, BehaviorState.DRIFTING}:

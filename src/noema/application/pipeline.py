@@ -795,15 +795,19 @@ class NoemaService:
         rows = []
         for session in sessions:
             classification = classifications.get(session.id)
+            # The meaningful episode this raw session belongs to (if any).
+            # Exposed on every row so the raw_session -> meaningful_episode ->
+            # classification lineage is always explicit and one episode verdict
+            # can never be mistaken for many independent AI judgments.
+            meaningful_session_id = parent_of.get(session.id)
             inherited_from = None
             if classification is None:
-                parent_id = parent_of.get(session.id)
-                classification = classifications.get(parent_id)
+                classification = classifications.get(meaningful_session_id)
                 if classification is not None:
                     # One episode verdict rendered on many raw rows: mark
                     # the inheritance explicitly so the UI never implies
                     # independent model decisions.
-                    inherited_from = parent_id
+                    inherited_from = meaningful_session_id
             application_id, application = application_identity(session.app or session.browser, session.title)
             item = {
                 "id": session.id,
@@ -836,6 +840,7 @@ class NoemaService:
                 "provider": classification.provider if classification else None,
                 "model": classification.model if classification else None,
                 "inherited_from": inherited_from,
+                "meaningful_session_id": meaningful_session_id,
             }
             rows.append(item)
         rows.sort(key=lambda item: (item["timestamp"], item["id"]), reverse=True)
