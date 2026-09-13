@@ -8,13 +8,24 @@ Semantic V2 splits two ideas that were previously collapsed into one boolean:
   ``unknown``).
 
 The single most important rule here is that *uncertainty must never become
-misalignment*. A session that has an active goal but only thin evidence is
-``unknown``, not ``misaligned`` — so it can never masquerade as a distraction
-downstream. Declaring an activity ``misaligned`` (clearly unrelated) requires a
-confident, well-evidenced classification; positive relevance, by contrast, is
-directly observable from token overlap and needs no such gate. ``productive``
-never automatically means ``aligned`` and ``distractive`` never automatically
-means ``misaligned``; both are judged only against the goal.
+either a false ALIGNED or a false MISALIGNED*, because a false ALIGNED hides
+real drift and a false MISALIGNED invents drift. Matching is deterministic and
+purely lexical, so two guards keep it conservative (see the goal-relevance audit
+in ``docs/SEMANTIC_V2_RELEVANCE_AUDIT.md``):
+
+* **ALIGNED needs genuine topical overlap.** The productivity / verb-compatibility
+  bonuses only *refine* a score that already shares a goal token; they can never
+  cross the alignment bar on their own. So "productive work whose type matches a
+  verb in the goal" is not ALIGNED unless it is actually about the goal.
+* **MISALIGNED needs positive evidence of unrelatedness.** Only a distractive
+  verdict (entertainment/gaming/casual/unrelated shopping) with strong evidence
+  and no goal overlap is ``misaligned``. Confident *productive* work that merely
+  failed to share a token is ``unknown`` — it may just be worded differently or
+  be a sub-topic of the goal.
+
+Everything else — thin evidence, no goal, borderline overlap, productive but
+unmatched — is ``unknown`` and never drifts. ``productive`` never automatically
+means ``aligned`` and ``distractive`` never automatically means ``misaligned``.
 """
 
 from __future__ import annotations
@@ -227,28 +238,45 @@ class GoalAligner:
             ):
                 compatibility_bonus = 0.25
                 break
-        score = min(1.0, overlap_score * 0.60 + productivity_bonus + compatibility_bonus)
+        # F1 (audit fix): the productivity/verb-compatibility bonuses may only
+        # REFINE a score that already has genuine semantic overlap; they must
+        # never manufacture alignment on their own. Without them, productivity
+        # (0.15) + compatibility (0.25) = 0.40 already crosses the 0.35 bar, so
+        # "productive work whose type matches any verb in the goal" would read
+        # ALIGNED with ZERO topical overlap — a false ALIGNED that silently
+        # hides drift (e.g. "Study Power Electronics" + reading unrelated RL).
+        # With no overlap the score stays 0 and the case falls to UNKNOWN.
+        if overlap:
+            score = min(1.0, overlap_score * 0.60 + productivity_bonus + compatibility_bonus)
+        else:
+            score = 0.0
         aligned = score >= self.threshold
 
-        # Evidence gate for declaring an activity clearly unrelated. Positive
-        # relevance (aligned) only needs observable token overlap; a
-        # *misaligned* verdict needs a confident, well-evidenced classification
-        # so uncertainty is never converted into distraction.
         quality = self._evidence_quality(session, classification)
         try:
             classification_confidence = float(classification.confidence) if classification else 0.0
         except (TypeError, ValueError):
             classification_confidence = 0.0
-        # Declaring an activity clearly unrelated demands a real, confident,
-        # well-evidenced verdict. A pending or failed classification (never
-        # "classified") can never clear this gate, so failed evidence cannot
-        # be converted into a misalignment — only into "unknown".
+        # Only a real, "classified" verdict is evidence. A pending or failed
+        # classification can never drive a misalignment.
         classified = (
             classification is not None
             and getattr(classification, "classification_status", None) == "classified"
         )
-        strong_enough_to_reject = (
-            classified
+        category = str(classification.category).strip().lower() if classification else ""
+        # F2 (audit fix): MISALIGNED requires POSITIVE evidence that the activity
+        # is unrelated — not merely the absence of a lexical match. Because
+        # matching is lexical only, "confident productive work that shared no
+        # token" is genuinely ambiguous (it may be worded differently, or be a
+        # sub-topic of the goal — e.g. YOLO11 docs for a YOLO goal, or a MuJoCo
+        # quadruped sim for a Unitree A1 goal). Those must stay UNKNOWN, never
+        # drift. The one deterministic positive signal of unrelatedness we trust
+        # is a distractive verdict (entertainment/gaming/casual/unrelated
+        # shopping) with strong evidence and no goal overlap.
+        is_distractive = classified and (
+            category == "distractive" or productivity == "distracting")
+        positively_unrelated = (
+            is_distractive
             and classification_confidence >= _MISALIGN_MIN_CONFIDENCE
             and quality in _MISALIGN_GOOD_QUALITY
         )
@@ -261,25 +289,27 @@ class GoalAligner:
             # borderline. Not confident enough to call it either way.
             relation = RELATION_UNKNOWN
             relevance = RELEVANCE_LOW
-        elif strong_enough_to_reject:
-            # No overlap AND a confident, well-evidenced verdict: the activity
-            # is understood and is not about the goal.
+        elif positively_unrelated:
+            # No overlap AND positively distractive with strong evidence: the
+            # activity is understood and is not about the goal.
             relation = RELATION_MISALIGNED
             relevance = RELEVANCE_NONE
         else:
-            # No overlap but thin evidence: we simply cannot tell.
+            # No overlap and no positive evidence of unrelatedness: we cannot
+            # tell whether this is off-goal or just worded differently.
             relation = RELATION_UNKNOWN
             relevance = RELEVANCE_UNKNOWN
 
         reason_parts = []
         if overlap:
             reason_parts.append("shared tokens: " + ", ".join(sorted(overlap)))
-        if compatibility_bonus:
-            reason_parts.append("activity type matches goal verb")
-        if productivity_bonus:
-            reason_parts.append("classified productive")
+            # Bonus reasons only count when overlap let them contribute (F1).
+            if compatibility_bonus:
+                reason_parts.append("activity type matches goal verb")
+            if productivity_bonus:
+                reason_parts.append("classified productive")
         if relation == RELATION_MISALIGNED:
-            reason_parts.append("no goal overlap with a confident well-evidenced verdict")
+            reason_parts.append("distractive activity unrelated to the goal")
         elif relation == RELATION_UNKNOWN and not overlap:
             reason_parts.append("insufficient evidence to relate activity to the goal")
         reason = "; ".join(reason_parts) if reason_parts else "no meaningful goal evidence"
