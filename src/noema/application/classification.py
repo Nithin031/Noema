@@ -158,6 +158,11 @@ CLASSIFY_RETRY_DELAYS = (0.2, 0.5)
 # Requeues on prompt change are explicit only, never automatic.
 PROMPT_VERSION = "2"
 
+# Classifier logic contract version, stamped alongside PROMPT_VERSION. Bump
+# when the parsing/decision logic (not just the prompt text) changes so a
+# cached in-memory verdict from an older logic version is never reused.
+CLASSIFIER_VERSION = "1"
+
 @dataclass(frozen=True)
 class Classification:
     """Structured meaning assigned to one session."""
@@ -555,6 +560,15 @@ class Classifier:
             "project": getattr(session, "primary_project", None),
             "topic": getattr(session, "primary_topic", None),
             "context": list(recent_context or []),
+            # Semantic identity: a cached verdict is only valid for the exact
+            # prompt + classifier logic that produced it. Bumping either
+            # version invalidates every in-memory cache entry so a stale
+            # verdict from an older contract can never be reused. (Goal
+            # context is deliberately absent — classification describes the
+            # observed activity independently of any goal; goal relevance is
+            # a separate, downstream alignment computation.)
+            "prompt_version": PROMPT_VERSION,
+            "classifier_version": CLASSIFIER_VERSION,
         }
         return json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str).casefold()
 

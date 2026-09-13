@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS alignments (
     score REAL NOT NULL,
     confidence REAL NOT NULL,
     reason TEXT NOT NULL,
+    relation TEXT NOT NULL DEFAULT 'unknown',
+    goal_relevance TEXT NOT NULL DEFAULT 'unknown',
+    alignment_confidence REAL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(session_id, intent_id)
 );
@@ -464,6 +467,15 @@ class SQLiteStore:
                 "prompt_version": "TEXT",
                 "classifier_version": "TEXT",
             },
+            "alignments": {
+                # Semantic V2: three-valued relation + separate goal relevance.
+                # Existing rows predate these columns; they default to
+                # 'unknown' rather than a fabricated verdict, so no historical
+                # alignment is invented and none of them can drive drift.
+                "relation": "TEXT NOT NULL DEFAULT 'unknown'",
+                "goal_relevance": "TEXT NOT NULL DEFAULT 'unknown'",
+                "alignment_confidence": "REAL",
+            },
         }
         for table, columns in migrations.items():
             existing = {
@@ -475,6 +487,24 @@ class SQLiteStore:
                     self._connection.execute(
                         "ALTER TABLE {} ADD COLUMN {} {}".format(table, column, column_type)
                     )
+        # Backfill legacy alignment rows. Only rows the new code could never
+        # have written are touched: aligned=1 but relation still the migration
+        # default 'unknown'. Those aligned=True rows are safely re-labelled
+        # 'aligned' (that fact was recorded); aligned=False legacy rows are
+        # deliberately left 'unknown' so no historical misalignment is
+        # fabricated. Idempotent — after the first run it matches nothing.
+        try:
+            self._connection.execute(
+                """
+                UPDATE alignments
+                SET relation = 'aligned',
+                    goal_relevance = CASE
+                        WHEN score >= 0.6 THEN 'high' ELSE 'medium' END
+                WHERE aligned = 1 AND relation = 'unknown'
+                """
+            )
+        except sqlite3.OperationalError:
+            pass
 
     def close(self) -> None:
         with self._lock:
@@ -1321,6 +1351,9 @@ class SQLiteStore:
             alignment.score,
             alignment.confidence,
             alignment.reason,
+            alignment.relation,
+            alignment.goal_relevance,
+            alignment.alignment_confidence,
         )
         with self._lock:
             existed = self._connection.execute(
@@ -1329,13 +1362,17 @@ class SQLiteStore:
             self._connection.execute(
                 """
                 INSERT INTO alignments
-                (id, session_id, intent_id, aligned, score, confidence, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, session_id, intent_id, aligned, score, confidence, reason,
+                 relation, goal_relevance, alignment_confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     aligned = excluded.aligned,
                     score = excluded.score,
                     confidence = excluded.confidence,
-                    reason = excluded.reason
+                    reason = excluded.reason,
+                    relation = excluded.relation,
+                    goal_relevance = excluded.goal_relevance,
+                    alignment_confidence = excluded.alignment_confidence
                 """,
                 values,
             )
@@ -1384,6 +1421,12 @@ class SQLiteStore:
                 score=row["score"],
                 confidence=row["confidence"],
                 reason=row["reason"],
+                relation=row["relation"] if "relation" in row.keys() else None,
+                goal_relevance=row["goal_relevance"] if "goal_relevance" in row.keys() else None,
+                alignment_confidence=(
+                    row["alignment_confidence"]
+                    if "alignment_confidence" in row.keys() else None
+                ),
             )
             for row in rows
         ]
