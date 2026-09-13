@@ -11,9 +11,10 @@ keyboard/mouse input timing, and normalize everything into per-second
 
 **How.** Two source families feed one normalizer:
 
-- *Native collectors* (`src/noema/infrastructure/native/`) — the primary
-  path. Window probes, presence probes, and an optional Firefox bridge work
-  with ActivityWatch stopped.
+- *Native collectors*
+  (`src/noema/infrastructure/activity_sources/native_windows.py`,
+  `native_presence.py`) — the primary path. Window probes, presence probes,
+  and an optional Firefox bridge work with ActivityWatch stopped.
 - *ActivityWatch adapter*
   (`src/noema/infrastructure/activity_sources/activitywatch/`) —
   intentionally small and read-only; it speaks the existing local telemetry

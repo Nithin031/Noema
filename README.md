@@ -57,6 +57,12 @@ Firefox bridge
 
 Raw events are normalized into a common event representation.
 
+> The Firefox bridge is the daemon-side WebSocket/HTTP endpoint
+> (`src/noema/infrastructure/browser/`) that a browser extension can push
+> tab metadata to. The browser extension client itself is **not bundled in
+> this repository**; without it, browser evidence is limited to what the
+> native/ActivityWatch collectors provide.
+
 ### 2. UNDERSTAND
 
 Raw heartbeats are not treated as independent activities.
@@ -236,7 +242,7 @@ This prevents a single uncertain classification from immediately causing an acti
 
 ### Independent realtime detection
 
-The realtime lane operates on a 60-second behavioral window and does not depend on the 10-minute semantic classification scheduler.
+The realtime lane operates on a 60-second behavioral window and does not depend on the ~20-minute semantic classification scheduler.
 
 It uses:
 
@@ -262,11 +268,17 @@ Idle activity forms its own timeline category and is excluded from semantic clas
 
 ### Local dashboard
 
-Noema includes a local React dashboard served directly by the daemon.
+Noema serves a built-in local dashboard directly from the daemon (static
+HTML/CSS/JS bundled in `src/noema/api/dashboard/`), reachable at:
 
 ```text
 http://127.0.0.1:8765
 ```
+
+An optional richer React frontend can be built into `web/dist/` and, when
+present, is served in preference to the bundled dashboard. That frontend is
+**not included in this repository**; out of the box you get the bundled
+dashboard.
 
 The dashboard exposes:
 
@@ -373,10 +385,13 @@ See [`PRIVACY.md`](PRIVACY.md) for the complete data-flow policy.
         └──────────┘     └─────┬────┘    └──────────────┘
                                │
                                ▼
-                         ┌───────────┐
-                         │    web/   │
-                         │ Dashboard │
-                         └───────────┘
+                    ┌────────────────────┐
+                    │  api/dashboard/    │
+                    │  built-in local UI │
+                    │  (optional web/    │
+                    │   React app if     │
+                    │   built)           │
+                    └────────────────────┘
 ```
 
 ---
@@ -387,7 +402,7 @@ Noema deliberately separates **semantic understanding** from **realtime interven
 
 | Lane              | Purpose                                          | Cadence |
 | ----------------- | ------------------------------------------------ | ------: |
-| Semantic pipeline | Build episodes and perform deeper classification | ~10 min |
+| Semantic pipeline | Build episodes and perform deeper classification | ~20 min |
 | Realtime pipeline | Detect behavioral drift quickly                  | ~60 sec |
 
 The realtime lane does not wait for the semantic pipeline to finish.
@@ -578,16 +593,12 @@ Run the Python test suite:
 python -m pytest tests -q
 ```
 
-Build the dashboard:
+The bundled dashboard (`src/noema/api/dashboard/`) is plain static
+HTML/CSS/JS and needs no build step. The optional React frontend is not
+included in this repository; if you add one under `web/`, build it with its
+own tooling (`npm ci && npm run build` producing `web/dist/`).
 
-```powershell
-Push-Location web
-npm run lint
-npm run build
-Pop-Location
-```
-
-CI runs the test suite with mocks and does not require:
+CI runs the Python test suite with mocks and does not require:
 
 * API keys
 * ActivityWatch
@@ -601,31 +612,21 @@ Live provider testing is intentionally separate.
 
 ```text
 src/noema/
-├── domain/
-│   ├── activity/
-│   ├── presence/
-│   ├── sessions/
-│   ├── meaningful_sessions/
-│   ├── classification/
-│   └── behavior/
-│
-├── application/
-│   ├── pipeline/
-│   ├── classification/
-│   ├── realtime/
-│   └── autonomous/
-│
-├── runtime/
-│   ├── ingest/
-│   ├── semantics/
-│   ├── behavior/
-│   ├── outcomes/
-│   └── realtime/
-│
-├── api/
-├── infrastructure/
-├── observability/
-└── web/
+├── domain/          # activity, presence, sessions, meaningful episodes,
+│                    # intent/alignment, behavior, intervention, privacy, ...
+├── application/     # pipeline, classification, realtime, autonomous
+├── infrastructure/  # activity_sources (native + ActivityWatch), providers,
+│                    # database, browser bridge, ollama, sync
+├── runtime/         # daemon, workers, single-instance lock, watchdog
+├── api/             # local HTTP API + bundled dashboard (api/dashboard/)
+├── cli/             # `noema` console entry points
+├── config/          # settings loader (NOEMA_* env)
+├── observability/   # metrics, benchmarks, quota/telemetry ledger
+└── docs/            # architecture, features, roadmap, licensing, status
+
+tests/               # unit, integration, regression, providers, realtime
+web/                 # OPTIONAL React frontend (not included in this repo;
+                     # build into web/dist/ to override the bundled dashboard)
 ```
 
 The ActivityWatch adapter remains intentionally small and **read-only**. Native collectors are the primary telemetry path.

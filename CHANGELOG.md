@@ -1,6 +1,50 @@
 # Changelog
 
-All notable changes to Noema are documented here.
+All notable changes to Noema are documented here. This project adheres to
+[Semantic Versioning](https://semver.org/); the single source of truth for
+the version is `pyproject.toml` (mirrored by `noema.__version__`).
+
+## [Unreleased]
+
+### Added
+
+- **Semantic V2 — three-valued goal alignment.** Goal *relevance* is now
+  separated from the raw semantic *category*. `AlignmentResult` gains
+  `relation` (`aligned` / `misaligned` / `unknown`), `goal_relevance`
+  (`high` / `medium` / `low` / `none` / `unknown`), and
+  `alignment_confidence`, with an `alignments` table migration and a
+  non-fabricating backfill of legacy rows. Behavior drifts only on an
+  explicit `misaligned` verdict; uncertainty (`unknown`) never drifts.
+- **Conservative deterministic relevance (audit fixes).** Productivity/verb
+  bonuses can no longer manufacture `aligned` without genuine topical
+  overlap; `misaligned` requires positive distractive evidence. Insufficient
+  evidence stays `unknown`. See `src/noema/docs/SEMANTIC_V2_RELEVANCE_AUDIT.md`
+  and `SEMANTIC_V2_STATUS.md`.
+- Classifier cache identity now includes prompt and classifier versions, so a
+  version bump never reuses a stale in-memory verdict.
+- Episode lineage (`meaningful_session_id`) exposed on recent-activity rows so
+  a single episode verdict is not shown as many independent judgments.
+- Licensing docs: `src/noema/docs/licensing/activitywatch.md` and
+  `dependency-audit.md`.
+
+### Changed (public-release hardening)
+
+- `CITATION.cff` now describes Noema (previously carried ActivityWatch's
+  upstream citation metadata).
+- Documentation corrected to match the code: ~20-minute semantic cadence
+  (was "10-minute" in README/`.env.example`), provider default `hosted`, the
+  built-in dashboard is bundled static HTML/CSS/JS (the optional React
+  frontend and the browser-extension client are **not** included in the
+  repository), and the `infrastructure/native/` path in `FEATURES.md`.
+- `pyproject.toml` metadata: `readme`, repository/homepage/documentation
+  URLs, keywords, and trove classifiers.
+- CI installs the declared `google-genai` dependency so the Gemini SDK tests
+  run; the web build job was removed (no frontend is bundled).
+- `.tool-versions` trimmed to Python + Poetry (dropped stale Rust/Node
+  entries inherited from the upstream checkout).
+- `THIRD_PARTY_NOTICES.md` corrected (removed the broken `web/LICENSE`
+  reference; fixed licensing-doc paths) and `CONTRIBUTING.md` expanded with
+  setup, checks, architecture boundaries, and privacy rules.
 
 ## [0.14.0] - 2026-09-11
 
