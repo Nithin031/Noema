@@ -47,6 +47,11 @@ about what it cannot know.
 
 ## How the pipeline works
 
+Raw activity is not semantic activity. Semantic activity is not intent.
+Intent is not alignment. Alignment is not behavioral drift. Drift is not an
+intervention. An intervention is not an outcome. Noema keeps each of these
+distinct — that separation is the architecture.
+
 ```mermaid
 flowchart LR
     A["OBSERVE<br/>Desktop + Browser Telemetry"]
@@ -94,17 +99,25 @@ transition, topic, project, intent, confidence). When browser domain evidence is
 unavailable, evidence-quality handling keeps fragmented tab activity from
 exploding into meaningless one-second episodes.
 
-### 3. ALIGN — conservative semantic classification
+### 3. CLASSIFY — conservative semantic classification
 
-Episodes are classified using a hosted model when enabled (Gemini by default,
-fully local Ollama path available). Each episode receives a behavioral category,
-confidence, evidence quality (`STRONG / MODERATE / WEAK / ABSENT`), and
-classification status. Goal alignment is three-valued — `aligned`, `misaligned`,
-or `unknown` — and deliberately conservative: weak evidence cannot become a
-confident verdict, and failed model calls stay `pending`/`failed` instead of
-becoming fabricated labels.
+Episodes are classified using a model when enabled. Gemini is the default
+hosted inference path. Ollama can be selected for fully local inference.
+Each episode receives a behavioral category, confidence, evidence quality
+(`STRONG / MODERATE / WEAK / ABSENT`), and classification status. Evidence
+quality is separate from confidence, and uncertainty remains `unknown`:
+weak evidence cannot become a confident verdict, and failed model calls stay
+`pending`/`failed` instead of becoming fabricated labels.
 
-### 4. DETECT DRIFT — two independent lanes
+### 4. ALIGN — episodes compared against intent
+
+Classification describes what the episode appears to be; alignment compares it
+against your stated goal. Goal alignment is three-valued — `aligned`,
+`misaligned`, or `unknown` — and deliberately conservative: productive does not
+automatically mean aligned, distractive does not automatically mean misaligned,
+and a mere lack of lexical overlap never means misaligned on its own.
+
+### 5. DETECT DRIFT — two independent lanes
 
 | Lane | Purpose | Cadence |
 | ---- | ------- | ------: |
@@ -115,14 +128,15 @@ The realtime lane (rolling behavior window → candidate score → hysteresis �
 verification → policy evaluation) never waits for the semantic pipeline. Drift
 requires an *explicit* misaligned verdict — uncertainty never drifts.
 
-### 5. INTERVENE — restraint by design
+### 6. INTERVENE — restraint by design
 
-Classification alone cannot trigger an intervention. Every action passes a policy
+Classification alone cannot trigger an intervention — intervention requires
+accumulated evidence. Every action passes a policy
 gate (confidence requirements, cooldowns, AFK veto, actionable-evidence
 thresholds, ineffective-streak backoff). The objective is not to interrupt
 constantly — it is to intervene only when the evidence justifies it.
 
-### 6. MEASURE — did it help?
+### 7. MEASURE — did it help?
 
 Noema records what happened after each intervention. An intervention counts as
 successful only if subsequent behavior shows recovery — not because it fired.
@@ -287,7 +301,7 @@ raw telemetry stay on your machine, and the local API binds to loopback only.
 
 When hosted inference is enabled, only compact, privacy-filtered per-session
 evidence (application name, window title/domain evidence for the sessions in the
-current batch, and the task instruction) is sent to the model — never file
+current batch when available, and the task instruction) is sent to the model — never file
 contents, keystrokes, screenshots, or full history. Realtime verification sends
 compact behavioral summaries, never raw event streams.
 
