@@ -170,7 +170,7 @@ def test_windows_autostart_command_is_hidden_and_uses_daemon_module():
 def test_windows_task_scheduler_xml_starts_hidden_limited_and_restarts_on_failure():
     xml = build_task_scheduler_xml(
         r"C:\Python\python.exe",
-        ["-m", "noema.runtime", "--config", r"C:\AI Activity OS\daemon.json"],
+        ["-m", "noema.runtime", "--config", r"C:\Noema\daemon.json"],
         str(Path.cwd()),
         user_id="test-user",
     )

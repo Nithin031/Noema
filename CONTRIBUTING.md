@@ -46,6 +46,23 @@ that in preference to the bundled dashboard when present).
 
 ## Architecture & where code belongs
 
+Noema is a behavioral-intelligence pipeline, not a tracker with extras. Every
+contribution should preserve the layering of the loop:
+
+```text
+observed activity → inferred meaning → user intent → behavioral state
+→ intervention → outcome
+```
+
+**Preserve the distinction between observed activity, inferred meaning, user
+intent, behavioral state, intervention, and outcome.** Do not collapse these
+into each other to make an implementation shorter.
+
+**Do not turn uncertainty into a stronger semantic verdict merely to make the
+system appear decisive.** `unknown` / `pending` / `failed` are first-class
+answers. A change that converts them into confident labels to "fix" an empty
+dashboard is a regression, not an improvement.
+
 Noema follows a layered architecture; please respect the boundaries:
 
 - `domain/` — pure business logic (activity, sessions, meaningful episodes,
@@ -61,6 +78,27 @@ Noema follows a layered architecture; please respect the boundaries:
 
 Do not bypass these boundaries to make a feature easier to implement (for
 example, do not reach into SQLite or a provider SDK from the domain layer).
+
+## Where contributions land in the pipeline
+
+- **Telemetry** (`infrastructure/activity_sources/`, `config/`) — collectors
+  must never fabricate activity: an unobservable source reports `unavailable`
+  with zero events, never ACTIVE presence or invented windows.
+- **Semantic classification** (`application/classification.py`,
+  `infrastructure/providers.py`, `domain/intent/`) — matching is deterministic
+  and lexical; productivity/verb bonuses refine genuine topical overlap but can
+  never manufacture `aligned`, and `misaligned` requires positive distractive
+  evidence. Provider failures stay `pending`/`failed`.
+- **Behavioral engine** (`domain/behavior/`) — only an explicit
+  `relation == "misaligned"` verdict can produce drift. `unknown`, neutral, or
+  invalid classifications must never drift and must never read as distraction.
+- **Intervention** (`domain/intervention/`, `application/...`) — a single weak
+  classification must never trigger an action. Every new trigger path needs the
+  policy gate (AFK veto, cooldowns, actionable-evidence threshold), lineage back
+  to its detection, and an outcome measurement.
+- **Privacy** (`domain/privacy/`, `PRIVACY.md`) — the filter is fail-closed and
+  only redacts/blocks, never invents. Hosted prompts carry the documented
+  minimal evidence and nothing more.
 
 ## Privacy is a hard requirement
 

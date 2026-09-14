@@ -13,7 +13,7 @@ from noema.domain.activity import ActivityEvent, coerce_timestamp
 
 @dataclass(frozen=True)
 class ActivitySession:
-    """A contiguous run of related normalized ActivityWatch events."""
+    """A contiguous run of related normalized telemetry events."""
 
     start: datetime
     end: datetime

@@ -31,3 +31,7 @@ node_modules/
 
 # Noema docs ship with the repo (negate the broad legacy `docs` entry above)
 !src/noema/docs/
+
+# Optional local frontend workspace (not distributed; the daemon serves the
+# bundled static dashboard in src/noema/api/dashboard/ when web/dist/ is absent)
+web/

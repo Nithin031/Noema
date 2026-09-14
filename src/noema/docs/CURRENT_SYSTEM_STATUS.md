@@ -13,7 +13,7 @@ Noema implements a six-stage continuous loop on a single local machine:
 OBSERVE → UNDERSTAND → ALIGN → DETECT DRIFT → INTERVENE → MEASURE
 ```
 
-All processing is local. No data leaves the device except AI API calls (Gemini / OpenRouter), which receive only anonymized session evidence — never raw window titles or URLs.
+All processing is local. No data leaves the device except AI API calls (Gemini / OpenRouter), which receive only privacy-filtered per-session evidence — application name, window title/domain evidence for the sessions in the current batch, and the task instruction (see `PRIVACY.md`) — never file contents, keystrokes, screenshots, or full history.
 
 ---
 

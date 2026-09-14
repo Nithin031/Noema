@@ -46,6 +46,45 @@ the version is `pyproject.toml` (mirrored by `noema.__version__`).
   reference; fixed licensing-doc paths) and `CONTRIBUTING.md` expanded with
   setup, checks, architecture boundaries, and privacy rules.
 
+### Fixed (final public-release validation)
+
+- `CODE_OF_CONDUCT.md` no longer points conduct reports at an upstream
+  author's personal email; reports go through a private GitHub security
+  advisory (see `SECURITY.md`).
+- Removed the `web` gitlink (a submodule-style pointer to an unrelated
+  third-party template with no `.gitmodules` entry); `web/` is now an
+  ignored local-only workspace and the tracked tree matches the documented
+  "bundled dashboard, optional frontend not included" state.
+- `src/noema/docs/architecture/overview.md`: Noema product/class names in
+  the quick-start (`NoemaService`, `ActivityWatchAdapter`), correct default
+  cadences (1s ingest / 5min behavior / 20min semantic + 60s realtime lane),
+  and the browser-extension client marked as not distributed.
+- `src/noema/docs/CURRENT_SYSTEM_STATUS.md`: hosted inference receives
+  privacy-filtered per-session evidence (titles/domains), matching
+  `PRIVACY.md` and the classifier code.
+- Bundled dashboard greeting no longer hardcodes a personal name.
+
+### Changed (public identity pass)
+
+- `README.md` rewritten around Noema's own identity (Personal Behavioral
+  Intelligence; OBSERVE → UNDERSTAND → ALIGN → DETECT DRIFT → INTERVENE →
+  MEASURE) with CI/license/Python badges, a Design Principles section, an
+  explicit what-ships/what-does-not section, and ActivityWatch covered only
+  under "Relationship to ActivityWatch".
+- `CONTRIBUTING.md` gained the pipeline layering contract (observed activity
+  vs inferred meaning vs intent vs behavioral state vs intervention vs
+  outcome), the uncertainty-honesty rule, and per-subsystem contribution
+  notes (telemetry, classification, behavior, intervention, privacy).
+- `SECURITY.md` rewritten for Noema's actual data handling: precise
+  statements about on-device storage, loopback binding, fail-closed privacy
+  filtering, minimal hosted-evidence payloads, and report categories
+  (telemetry exposure, network transmission, API exposure, credentials,
+  browser bridge, database/logging/provider leakage).
+- `PRIVACY.md` and code docstrings now describe telemetry sources
+  generically (native-first, ActivityWatch optional) instead of
+  ActivityWatch-first; `pyproject.toml` keywords lead with
+  `behavioral-intelligence`.
+
 ## [0.14.0] - 2026-09-11
 
 ### Added

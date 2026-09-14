@@ -8,7 +8,7 @@ readme = "README.md"
 homepage = "https://github.com/Nithin031/Noema"
 repository = "https://github.com/Nithin031/Noema"
 documentation = "https://github.com/Nithin031/Noema/tree/main/src/noema/docs"
-keywords = ["activity-tracking", "productivity", "local-first", "privacy", "behavioral-intelligence"]
+keywords = ["behavioral-intelligence", "local-first", "privacy", "productivity", "intent-alignment"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

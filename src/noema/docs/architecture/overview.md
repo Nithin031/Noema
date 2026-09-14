@@ -1,4 +1,4 @@
-# AI Activity OS — Generations 0–10
+# Noema — Architecture (Generations 0–10)
 
 This package is an independent local activity-intelligence service. It reads
 telemetry from a compatible local collector, normalizes events, applies a
@@ -7,7 +7,7 @@ privacy policy, and stores derived activity for session and semantic services.
 ```text
 Collector REST/buckets
           ↓  read-only
-       AWAdapter
+  ActivityWatchAdapter
           ↓
     EventNormalizer
           ↓
@@ -67,9 +67,9 @@ from noema.api import NoemaApp, create_app, serve
 from noema.application.pipeline import NoemaService
 from noema.infrastructure.database import SQLiteStore
 
-adapter = AWAdapter(ActivityWatchClient())
+adapter = ActivityWatchAdapter(ActivityWatchClient())
 store = SQLiteStore("noema.db")
-service = AIActivityOSService(adapter, store)
+service = NoemaService(adapter, store)
 
 # Pull from the configured telemetry source when desired (the adapter performs GET requests only).
 service.ingest_telemetry()
@@ -146,8 +146,9 @@ bypasses the intervention policy or dry-run boundary.
 
 ## Firefox intervention bridge
 
-The optional Firefox WebExtension lives in
-`web/extension/firefox/`. It registers browser identity,
+The optional Firefox WebExtension client is not distributed in this
+repository. When present locally (conventionally under
+`web/extension/firefox/`), it registers browser identity,
 maintains exact current window/tab state, receives intervention action payloads
 over WebSocket (with HTTP long-poll fallback), and renders MEME/NOTIFICATION
 overlays inside a Shadow DOM. It reports displayed, dismissed, auto-dismissed,
@@ -171,8 +172,9 @@ to preserve session boundaries, retries failed stages with exponential
 backoff, writes structured JSON logs, and exposes
 `GET http://127.0.0.1:8765/api/daemon/health`. The local API and Firefox
 WebSocket bridge are started by the same process. The default cadence is
-one-minute local ingestion, five-minute behavior
-evaluation, and five-minute semantic classification. The local fallback model
+one-second local ingestion, five-minute behavior
+evaluation, and twenty-minute semantic classification, alongside the
+independent 60-second realtime detection lane. The local fallback model
 is `llama3.2:3b`. `--once` and `POST /api/autonomous/cycle` remain available
 for an on-demand full cycle. A JSON config can be passed with
 `--config path\to\daemon.json`; editing it is picked up automatically,
@@ -190,7 +192,7 @@ package does not modify startup settings merely because it is imported.
 `--once` is available for a single smoke-test cycle.
 
 For an application-specific policy, pass `PrivacyFilter(PrivacyPolicy(...))`
-to `AIActivityOSService`. Blocked events are discarded before SQLite or any
+to `NoemaService`. Blocked events are discarded before SQLite or any
 future AI service sees them. Allowed browser URLs have query strings and
 fragments removed by default.
 

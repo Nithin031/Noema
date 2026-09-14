@@ -233,7 +233,7 @@ $("save-intent").onclick = async () => {
   const h = new Date().getHours();
   const greeting = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const h1 = document.querySelector(".topbar h1");
-  if (h1) h1.innerHTML = `${greeting}, <em>Wizard</em>.`;
+  if (h1) h1.textContent = greeting + ".";
 })();
 
 refresh();

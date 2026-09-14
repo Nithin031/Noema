@@ -1,36 +1,51 @@
 # Noema
 
-**Personal Behavioral Intelligence for your desktop.**
+[![CI](https://github.com/Nithin031/Noema/actions/workflows/test.yml/badge.svg)](https://github.com/Nithin031/Noema/actions/workflows/test.yml)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-brightgreen.svg)](https://github.com/Nithin031/Noema/blob/main/LICENSE.txt)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/Nithin031/Noema/blob/main/pyproject.toml)
 
-Noema is a **private, local-first system that understands the difference between what you are doing and what you intended to do.**
+**Personal Behavioral Intelligence — local-first.**
 
-It observes desktop and browser activity, turns raw telemetry into meaningful task episodes, classifies behavior, detects drift from your intended activity, intervenes when appropriate, and measures whether the intervention actually helped.
+> Understand what you're doing. Compare it to what you meant.
+
+Most productivity software can tell you where your time went.
+
+Noema is interested in a harder question:
+
+> **"What was I actually doing, and was it what I intended to do?"**
+
+A stream of application windows, browser tabs, and heartbeats is not behavior by
+itself. Noema turns raw desktop telemetry into **semantic activity episodes**,
+compares them against your stated intent, watches for sustained drift, intervenes
+only when the evidence justifies it, and measures whether the intervention helped.
 
 > **OBSERVE → UNDERSTAND → ALIGN → DETECT DRIFT → INTERVENE → MEASURE**
 
-The core idea is simple:
-
-**Your computer should understand your behavior without requiring your activity data to leave your machine.**
+Telemetry is the input. Behavioral intelligence is the product.
 
 ---
 
-## Why Noema?
+## What Noema is
 
-Most activity trackers answer:
+Noema is a **local-first Personal Behavioral Intelligence system**. It is concerned
+with:
 
-> **"What application did I use?"**
+- what the computer observes (foreground windows, input presence, browser context)
+- what the user appears to be doing (semantic activity episodes)
+- what the user intended to do (explicit goals / intent)
+- whether observed activity aligns with that intent (goal alignment)
+- sustained behavioral drift (distraction that persists, not a single tab)
+- restrained intervention (policy-gated, cooldown-bound, measurable)
+- whether the intervention actually worked (recovery measurement)
 
-Noema tries to answer:
-
-> **"What was I actually doing, was it aligned with my intent, and what happened afterward?"**
-
-A stream of browser tabs, application windows, and heartbeats is not meaningful behavior by itself.
-
-Noema therefore does not treat every telemetry row as an activity. It builds **meaningful behavioral episodes** from continuous evidence, evaluates the quality of that evidence, and only then makes a behavioral judgment.
+Noema is **not** an activity tracker, a time tracker, a website blocker, a focus
+timer, a dashboard product, a chatbot, or an LLM wrapper. Those categories describe
+tools that count, block, or chat. Noema tries to *understand* — and to stay honest
+about what it cannot know.
 
 ---
 
-## Core Pipeline
+## How the pipeline works
 
 ```mermaid
 flowchart LR
@@ -44,407 +59,110 @@ flowchart LR
     A --> B --> C --> D --> E --> F
 ```
 
-### 1. OBSERVE
+### 1. OBSERVE — telemetry in, nothing else
 
-Noema collects desktop and browser telemetry from local sources.
-
-```text
-ActivityWatch
-Native window collectors
-Native input collectors
-Firefox bridge
-```
-
-Raw events are normalized into a common event representation.
-
-> The Firefox bridge is the daemon-side WebSocket/HTTP endpoint
-> (`src/noema/infrastructure/browser/`) that a browser extension can push
-> tab metadata to. The browser extension client itself is **not bundled in
-> this repository**; without it, browser evidence is limited to what the
-> native/ActivityWatch collectors provide.
-
-### 2. UNDERSTAND
-
-Raw heartbeats are not treated as independent activities.
-
-Noema:
-
-* sessionizes continuous activity
-* splits sessions around AFK periods
-* merges related context
-* builds meaningful task episodes
-* scores continuity between observations
-* evaluates evidence quality
-
-The result is a higher-level representation of behavior:
+Noema observes the local machine through its own native collectors (foreground
+window + input presence on Windows) and an optional browser bridge endpoint that
+a browser extension client can push tab metadata to.
 
 ```text
-Raw telemetry
-     ↓
-Activity sessions
-     ↓
-Meaningful episodes
-     ↓
-Behavioral observations
-```
-
-### 3. ALIGN
-
-Episodes are classified semantically using a hosted model when enabled.
-
-Each episode receives:
-
-* behavioral category
-* confidence
-* evidence quality
-* classification status
-
-Classification is deliberately conservative.
-
-**Weak evidence cannot magically become a confident behavioral verdict.**
-
-Failed model calls remain `pending` or `failed`. Noema never invents a classification simply because an inference request failed.
-
-### 4. DETECT DRIFT
-
-Episodes are aggregated into behavioral signals:
-
-```text
-FOCUSED
-DISTRACTED
-IDLE
-```
-
-Noema also runs an independent realtime detection lane.
-
-```text
-Rolling behavior window
-        ↓
-Local candidate score
-        ↓
-Hysteresis
-        ↓
-Fast verification
-        ↓
-Policy evaluation
-```
-
-This realtime path operates independently from the slower semantic classification pipeline.
-
-### 5. INTERVENE
-
-Classification alone cannot trigger an intervention.
-
-An intervention must pass through a **policy gate**.
-
-Possible actions include:
-
-* notification
-* contextual intervention
-* meme
-* holdout experiment
-
-The policy layer handles:
-
-* confidence requirements
-* cooldowns
-* de-escalation
-* actionable distraction thresholds
-
-The objective is not to constantly interrupt the user.
-
-**The objective is to intervene only when the evidence justifies it.**
-
-### 6. MEASURE
-
-Noema tracks what happened after an intervention.
-
-This allows the system to ask:
-
-> Did the intervention actually help the user recover?
-
-That closes the loop.
-
----
-
-# Key Features
-
-### Meaningful episodes, not row counting
-
-Raw watcher heartbeats are sessionized and merged into meaningful task episodes using continuity scoring.
-
-When browser domain evidence is unavailable, evidence-quality handling prevents fragmented tab activity from producing meaningless session explosions.
-
-### Evidence quality is deterministic
-
-Every episode receives an evidence rating:
-
-```text
-STRONG
-MODERATE
-WEAK
-ABSENT
-```
-
-The rating is derived from observed signals such as:
-
-```text
-Application
-Window title
-Browser domain
-URL
-```
-
-The model does not decide the evidence quality.
-
-Thin evidence forces conservative behavior.
-
-### Honest AI classification
-
-Noema uses chunked, token-budgeted classification requests.
-
-Failures remain:
-
-```text
-pending
-failed
-```
-
-A failed model request does **not** become a fabricated label.
-
-### Behavioral intelligence
-
-Meaningful episodes roll up into:
-
-```text
-FOCUSED
-DISTRACTED
-IDLE
-```
-
-with associated focus and distraction scores.
-
-### Policy-gated interventions
-
-Noema separates:
-
-```text
-Classification
-      ↓
-Behavioral signal
-      ↓
-Policy
-      ↓
-Intervention
-```
-
-This prevents a single uncertain classification from immediately causing an action.
-
-### Independent realtime detection
-
-The realtime lane operates on a 60-second behavioral window and does not depend on the ~20-minute semantic classification scheduler.
-
-It uses:
-
-```text
-Candidate score
+Telemetry
     ↓
-Hysteresis
+Normalization (canonical events, privacy filter first)
     ↓
-Fast verification
+Sessions (continuous stretches of same-context activity)
     ↓
-Intervention
+Semantic episodes (task-level units built by continuity scoring)
+    ↓
+Classification (behavioral category + confidence + evidence quality)
+    ↓
+Intent / Alignment (episode vs. your stated goal: aligned / misaligned / unknown)
+    ↓
+Behavior (FOCUSED / DISTRACTED / IDLE signals over rolling windows)
+    ↓
+Intervention (policy-gated, cooldown-bound actions)
+    ↓
+Outcome (did behavior recover afterward?)
 ```
 
-Fast verification occurs on entry rather than continuously.
+### 2. UNDERSTAND — episodes, not row counting
 
-### Presence is not focus
+Raw heartbeats are never treated as independent activities. Noema sessionizes
+continuous activity, splits sessions around AFK periods, and merges related
+context into **semantic activity episodes** using continuity scoring (time,
+transition, topic, project, intent, confidence). When browser domain evidence is
+unavailable, evidence-quality handling keeps fragmented tab activity from
+exploding into meaningless one-second episodes.
 
-AFK is determined from **input timing**.
+### 3. ALIGN — conservative semantic classification
 
-Window focus is not treated as proof of presence.
+Episodes are classified using a hosted model when enabled (Gemini by default,
+fully local Ollama path available). Each episode receives a behavioral category,
+confidence, evidence quality (`STRONG / MODERATE / WEAK / ABSENT`), and
+classification status. Goal alignment is three-valued — `aligned`, `misaligned`,
+or `unknown` — and deliberately conservative: weak evidence cannot become a
+confident verdict, and failed model calls stay `pending`/`failed` instead of
+becoming fabricated labels.
 
-Idle activity forms its own timeline category and is excluded from semantic classification.
+### 4. DETECT DRIFT — two independent lanes
 
-### Local dashboard
+| Lane | Purpose | Cadence |
+| ---- | ------- | ------: |
+| Semantic pipeline | Build episodes, classify, align to intent | ~20 min |
+| Realtime pipeline | Detect behavioral drift quickly | ~60 sec |
 
-Noema serves a built-in local dashboard directly from the daemon (static
-HTML/CSS/JS bundled in `src/noema/api/dashboard/`), reachable at:
+The realtime lane (rolling behavior window → candidate score → hysteresis → fast
+verification → policy evaluation) never waits for the semantic pipeline. Drift
+requires an *explicit* misaligned verdict — uncertainty never drifts.
 
-```text
-http://127.0.0.1:8765
-```
+### 5. INTERVENE — restraint by design
 
-An optional richer React frontend can be built into `web/dist/` and, when
-present, is served in preference to the bundled dashboard. That frontend is
-**not included in this repository**; out of the box you get the bundled
-dashboard.
+Classification alone cannot trigger an intervention. Every action passes a policy
+gate (confidence requirements, cooldowns, AFK veto, actionable-evidence
+thresholds, ineffective-streak backoff). The objective is not to interrupt
+constantly — it is to intervene only when the evidence justifies it.
 
-The dashboard exposes:
+### 6. MEASURE — did it help?
 
-* activity timeline
-* behavioral verdicts
-* evidence quality
-* classification queue
-* quotas
-* model results
-* realtime detector status
-* daemon health
-
-### Observable model usage
-
-Every model invocation can be tracked through the local quota and telemetry ledger.
-
-Recorded metadata includes:
-
-```text
-Provider
-Model
-Purpose
-Pipeline
-Token usage
-Latency
-Retries
-Fallback depth
-```
-
-Unknown quota or token values remain unknown rather than being fabricated.
-
-### Privacy by construction
-
-Noema is designed around a **local-first architecture**.
-
-The following remain on your machine:
-
-```text
-SQLite database
-Logs
-Quota ledger
-Environment configuration
-Raw telemetry
-```
-
-When hosted inference is enabled, only compact per-session evidence is sent to the model.
-
-Realtime verification sends compact behavioral summaries rather than the underlying raw telemetry.
-
-For fully local inference:
-
-```text
-NOEMA_PROVIDER=ollama
-```
-
-with hosted API keys unset.
-
-See [`PRIVACY.md`](PRIVACY.md) for the complete data-flow policy.
+Noema records what happened after each intervention. An intervention counts as
+successful only if subsequent behavior shows recovery — not because it fired.
 
 ---
 
-# Architecture
+## Design Principles
 
-```text
-                    ┌─────────────────────┐
-                    │   Telemetry Sources │
-                    │                     │
-                    │ ActivityWatch       │
-                    │ Native Collectors   │
-                    │ Firefox Bridge      │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │       domain/       │
-                    │                     │
-                    │ Activity            │
-                    │ Presence            │
-                    │ Sessions            │
-                    │ Meaningful Episodes │
-                    │ Classification      │
-                    │ Behavior            │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                  ┌─────────────────────────┐
-                  │     application/        │
-                  │                         │
-                  │ Pipeline                │
-                  │ Classification         │
-                  │ Realtime Detection     │
-                  │ Autonomous Actions     │
-                  └────────────┬────────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-        ┌──────────┐     ┌──────────┐    ┌──────────────┐
-        │ runtime/ │     │   api/   │    │ observability│
-        │          │     │          │    │              │
-        │ Workers  │     │ REST API │    │ Metrics      │
-        │ Ingest   │     │          │    │ Benchmarks   │
-        │ Semantic │     │          │    │ Quotas       │
-        │ Realtime │     │          │    │              │
-        └──────────┘     └─────┬────┘    └──────────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │  api/dashboard/    │
-                    │  built-in local UI │
-                    │  (optional web/    │
-                    │   React app if     │
-                    │   built)           │
-                    └────────────────────┘
-```
+1. Activity is evidence, not meaning.
+2. Intent gives activity context.
+3. Uncertainty remains uncertainty.
+4. Presence is not productivity.
+5. Episodes are more meaningful than isolated events.
+6. Evidence quality is separate from confidence.
+7. Classification failure is not a semantic verdict.
+8. Intervention requires accumulated evidence.
+9. Every intervention should be measurable.
+10. Local-first is a system property, not a marketing phrase.
 
 ---
 
-# Two Processing Lanes
+## What exists today — and what does not
 
-Noema deliberately separates **semantic understanding** from **realtime intervention**.
+**Shipped and working:** native Windows telemetry collectors (primary path),
+AFK/presence detection from input timing, sessionization, semantic episodes with
+evidence quality, Gemini-hosted or Ollama-local classification, three-valued goal
+alignment, behavior engine + realtime drift detection, policy-gated interventions
+with outcome/recovery tracking, local REST API, and a bundled static dashboard
+served by the daemon at `http://127.0.0.1:8765`.
 
-| Lane              | Purpose                                          | Cadence |
-| ----------------- | ------------------------------------------------ | ------: |
-| Semantic pipeline | Build episodes and perform deeper classification | ~20 min |
-| Realtime pipeline | Detect behavioral drift quickly                  | ~60 sec |
-
-The realtime lane does not wait for the semantic pipeline to finish.
-
-This separation allows Noema to combine **rich semantic understanding** with **low-latency behavioral detection**.
-
----
-
-# Model Providers
-
-The default classification chain is **Gemini-only**.
-
-The system supports a ranked Flash-model chain with bounded, token-aware batching.
-
-Configuration includes:
-
-```text
-NOEMA_GEMINI_MODELS
-NOEMA_MAX_PER_RUN
-NOEMA_FAST_MODEL_TIMEOUT_SECONDS
-NOEMA_PROVIDER
-```
-
-An Ollama-based local inference path is also available:
-
-```powershell
-$env:NOEMA_PROVIDER="ollama"
-```
-
-with the local model server running at:
-
-```text
-http://127.0.0.1:11434
-```
-
-An OpenRouter integration exists in the codebase but is disabled by default.
+**Not included in this repository:** a React frontend (the daemon serves the
+bundled static dashboard; an optional `web/dist/` build would take precedence if
+you add one), a browser-extension client (the daemon-side bridge endpoint ships;
+the extension itself does not), and cross-platform native collectors (non-Windows
+platforms use the optional ActivityWatch adapter). See
+[Relationship to ActivityWatch](#relationship-to-activitywatch).
 
 ---
 
-# Installation
-
-Clone the repository and install Noema:
+## Installation
 
 ```powershell
 pip install .
@@ -469,45 +187,26 @@ $env:PYTHONPATH="src"
 python -m noema
 ```
 
----
+## Configuration
 
-# Configuration
-
-Copy the example configuration:
-
-```text
-.env.example
-```
-
-to:
-
-```text
-.env
-```
-
-Set the required provider configuration.
-
-For Gemini:
+Copy `.env.example` to `.env` and set the provider configuration. For Gemini:
 
 ```text
 GEMINI_API_KEY=...
 ```
 
-Configuration uses the canonical:
+Configuration uses the canonical `NOEMA_*` prefix. Historical `AI_ACTIVITY_OS_*`
+names remain accepted by the configuration loader. **Never commit `.env` or API keys.**
+
+For fully local inference:
 
 ```text
-NOEMA_*
+NOEMA_PROVIDER=ollama
 ```
 
-prefix.
+with hosted API keys unset.
 
-Historical `AI_ACTIVITY_OS_*` names remain accepted by the configuration loader.
-
-**Never commit `.env` or API keys.**
-
----
-
-# Running Noema
+## Running Noema
 
 Start the daemon:
 
@@ -519,6 +218,12 @@ Run a single pipeline cycle:
 
 ```powershell
 python -m noema --once
+```
+
+Show live native telemetry (no server, database, or model needed):
+
+```powershell
+python -m noema telemetry
 ```
 
 Run deterministic benchmarks:
@@ -539,21 +244,12 @@ Open the local dashboard:
 http://127.0.0.1:8765
 ```
 
----
+## Rebuilding inference
 
-# Rebuilding Inference
-
-Noema can rebuild derived episodes and classifications without touching raw telemetry.
-
-Preview the operation:
+Derived episodes and classifications can be rebuilt without touching raw telemetry:
 
 ```powershell
 python rerun_inference.py --dry-run
-```
-
-Run the rebuild:
-
-```powershell
 python rerun_inference.py --yes
 ```
 
@@ -561,62 +257,56 @@ A timestamped backup is created before derived data is removed.
 
 ---
 
-# API
+## API
 
-The daemon exposes a local API on:
+The daemon exposes a local loopback-only API on `127.0.0.1:8765`.
 
-```text
-127.0.0.1:8765
-```
+| Endpoint | Purpose |
+| -------- | ------- |
+| `GET /` | Local dashboard |
+| `GET /api/daemon/health` | Daemon and worker health |
+| `GET /api/dashboard/summary?range=today` | Timeline and calendar totals |
+| `GET /api/dashboard/recent-activity?range=24h` | Recent sessions and verdicts |
+| `GET /api/meaningful-sessions` | Semantic activity episodes |
+| `GET /api/classifications` | Stored classifications |
+| `GET /api/classification/status` | Classification queue and quota state |
+| `POST /api/ai/run` | Run a manual classification pass |
+| `GET /api/debug/quotas` | Model quota ledger |
+| `GET /api/realtime/status` | Realtime detector state |
+| `GET /api/presence/current` | Current presence state |
 
-| Endpoint                                       | Purpose                              |
-| ---------------------------------------------- | ------------------------------------ |
-| `GET /`                                        | Local dashboard                      |
-| `GET /api/daemon/health`                       | Daemon and worker health             |
-| `GET /api/dashboard/summary?range=today`       | Timeline and calendar totals         |
-| `GET /api/dashboard/recent-activity?range=24h` | Recent sessions and verdicts         |
-| `GET /api/meaningful-sessions`                 | Meaningful behavioral episodes       |
-| `GET /api/classifications`                     | Stored classifications               |
-| `GET /api/classification/status`               | Classification queue and quota state |
-| `POST /api/ai/run`                             | Run a manual classification pass     |
-| `GET /api/debug/quotas`                        | Model quota ledger                   |
-| `GET /api/realtime/status`                     | Realtime detector state              |
-| `GET /api/presence/current`                    | Current presence state               |
-
----
-
-# Testing
-
-Run the Python test suite:
-
-```powershell
-python -m pytest tests -q
-```
-
-The bundled dashboard (`src/noema/api/dashboard/`) is plain static
-HTML/CSS/JS and needs no build step. The optional React frontend is not
-included in this repository; if you add one under `web/`, build it with its
-own tooling (`npm ci && npm run build` producing `web/dist/`).
-
-CI runs the Python test suite with mocks and does not require:
-
-* API keys
-* ActivityWatch
-* Ollama
-
-Live provider testing is intentionally separate.
+Quota figures served by the API are **local estimates** (`isLocalEstimate: true`
+with an explicit `quotaScope`), never provider-authoritative claims.
 
 ---
 
-# Project Structure
+## Privacy
+
+Noema is local-first: the SQLite database, logs, quota ledger, configuration, and
+raw telemetry stay on your machine, and the local API binds to loopback only.
+
+When hosted inference is enabled, only compact, privacy-filtered per-session
+evidence (application name, window title/domain evidence for the sessions in the
+current batch, and the task instruction) is sent to the model — never file
+contents, keystrokes, screenshots, or full history. Realtime verification sends
+compact behavioral summaries, never raw event streams.
+
+See [`PRIVACY.md`](PRIVACY.md) for the complete data-flow policy and
+[`SECURITY.md`](SECURITY.md) for vulnerability reporting.
+
+---
+
+## Project structure
 
 ```text
 src/noema/
-├── domain/          # activity, presence, sessions, meaningful episodes,
-│                    # intent/alignment, behavior, intervention, privacy, ...
-├── application/     # pipeline, classification, realtime, autonomous
-├── infrastructure/  # activity_sources (native + ActivityWatch), providers,
-│                    # database, browser bridge, ollama, sync
+├── domain/          # pure behavioral logic: activity, presence, sessions,
+│                    # semantic episodes, intent/alignment, behavior,
+│                    # intervention, privacy — no I/O here
+├── application/     # pipeline, classification, realtime detection,
+│                    # autonomous orchestration
+├── infrastructure/  # adapters: native collectors, ActivityWatch adapter,
+│                    # providers, database, browser bridge, ollama, sync
 ├── runtime/         # daemon, workers, single-instance lock, watchdog
 ├── api/             # local HTTP API + bundled dashboard (api/dashboard/)
 ├── cli/             # `noema` console entry points
@@ -625,91 +315,61 @@ src/noema/
 └── docs/            # architecture, features, roadmap, licensing, status
 
 tests/               # unit, integration, regression, providers, realtime
-web/                 # OPTIONAL React frontend (not included in this repo;
-                     # build into web/dist/ to override the bundled dashboard)
 ```
 
-The ActivityWatch adapter remains intentionally small and **read-only**. Native collectors are the primary telemetry path.
+## Relationship to ActivityWatch
+
+ActivityWatch is a **third-party ecosystem and interoperability reference** — it
+is not Noema's product identity and Noema is not an ActivityWatch fork, wrapper,
+or extension.
+
+Concretely:
+
+- Noema's primary telemetry path is its own **independent native implementation**
+  (`src/noema/infrastructure/activity_sources/native_*.py`, standard library
+  only). No ActivityWatch source code is copied or adapted into Noema.
+- A small **read-only** adapter
+  (`src/noema/infrastructure/activity_sources/activitywatch/`) can consume a
+  local ActivityWatch instance as an *optional* compatibility source where
+  supported. Native collectors remain the primary path and keep working with
+  ActivityWatch stopped.
+- Full provenance and licensing details live in
+  [`src/noema/docs/licensing/activitywatch.md`](src/noema/docs/licensing/activitywatch.md)
+  and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Both projects are
+  MPL-2.0.
 
 ---
 
-# Design Principles
+## Testing
 
-Noema is built around a few non-negotiable principles.
-
-### 1. Evidence before inference
-
-Observed signals come first. Model interpretation comes second.
-
-### 2. Uncertainty stays uncertainty
-
-Missing evidence does not become confidence.
-
-Failed inference does not become a fabricated verdict.
-
-### 3. Episodes over events
-
-Behavior is represented as meaningful temporal episodes rather than isolated telemetry rows.
-
-### 4. Classification does not equal action
-
-Every intervention passes through a separate policy layer.
-
-### 5. Presence does not equal focus
-
-Input activity determines presence. Application focus does not.
-
-### 6. Local by default
-
-Raw behavioral telemetry should remain local whenever possible.
-
-### 7. Measure the intervention
-
-An intervention is not successful because it fired.
-
-It is successful only if the user's subsequent behavior shows recovery.
-
----
-
-# Documentation
-
-More detailed documentation is available in:
-
-* [`PRIVACY.md`](PRIVACY.md) for the privacy and external-data policy
-* [`SECURITY.md`](SECURITY.md) for vulnerability reporting
-* [`src/noema/docs/FEATURES.md`](src/noema/docs/FEATURES.md) for feature-level documentation
-* [`src/noema/docs/ROADMAP.md`](src/noema/docs/ROADMAP.md) for planned improvements
-* [`LICENSE.txt`](LICENSE.txt) for licensing information
-* [`CITATION.cff`](CITATION.cff) for citation metadata
-
----
-
-# Status
-
-Noema is an actively developed research-oriented system exploring **personal behavioral intelligence, activity understanding, intent alignment, and adaptive intervention**.
-
-The architecture is intentionally modular so that telemetry collection, semantic understanding, behavioral inference, policy, intervention, and measurement can evolve independently.
-
----
-
-## The Goal
-
-Noema is not trying to build another screen-time tracker.
-
-It is trying to build a system that can understand:
-
-```text
-What am I doing?
-       ↓
-What was I intending to do?
-       ↓
-Are they aligned?
-       ↓
-If not, how confident are we?
-       ↓
-Should the system intervene?
-       ↓
-Did the intervention work?
+```powershell
+python -m pytest tests -q
 ```
 
-**That is the behavioral intelligence loop Noema is built around.**
+CI runs the Python suite with mocks only — no API keys, no ActivityWatch, no
+Ollama required. Live provider testing is intentionally separate.
+
+## Documentation
+
+- [`PRIVACY.md`](PRIVACY.md) — privacy and external-data policy
+- [`SECURITY.md`](SECURITY.md) — vulnerability reporting
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup and contribution rules
+- [`src/noema/docs/FEATURES.md`](src/noema/docs/FEATURES.md) — feature-level documentation
+- [`src/noema/docs/ROADMAP.md`](src/noema/docs/ROADMAP.md) — planned improvements
+- [`LICENSE.txt`](LICENSE.txt) — licensing information (MPL-2.0)
+- [`CITATION.cff`](CITATION.cff) — citation metadata
+
+## Status
+
+Noema is an actively developed research-oriented system exploring **personal
+behavioral intelligence: activity understanding, intent alignment, drift
+detection, restrained intervention, and outcome measurement**.
+
+## License
+
+Noema is licensed under the Mozilla Public License 2.0 — see
+[`LICENSE.txt`](LICENSE.txt). Third-party notices live in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+If you use or refer to Noema in research, please cite it per
+[`CITATION.cff`](CITATION.cff).

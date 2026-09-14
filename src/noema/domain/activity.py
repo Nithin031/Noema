@@ -73,7 +73,7 @@ class ActivityEvent:
     bucket_id: Optional[str] = None
     source_event_id: Optional[str] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    # Browser identity is optional because most ActivityWatch events are not
+    # Browser identity is optional because most telemetry events are not
     # browser events.  When present it lets interventions target the exact tab
     # that produced the evidence.
     browser: Optional[str] = None

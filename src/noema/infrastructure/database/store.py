@@ -1,4 +1,4 @@
-"""SQLite storage for normalized, privacy-filtered ActivityWatch events."""
+"""SQLite storage for normalized, privacy-filtered telemetry events."""
 
 from __future__ import annotations
 
@@ -607,10 +607,10 @@ class SQLiteStore:
         return self.upsert_event(event) in {"inserted", "updated"}
 
     def upsert_event(self, event: ActivityEvent) -> str:
-        """Insert or refresh one ActivityWatch event.
+        """Insert or refresh one normalized telemetry event.
 
-        ``currentwindow`` watcher rows are mutable heartbeats: ActivityWatch
-        keeps the same source event id and increases its duration while the
+        ``currentwindow``-style watcher rows are mutable heartbeats: sources
+        keep the same source event id and increase its duration while the
         application remains active. Treating every repeated source id as an
         immutable duplicate freezes long-running applications at the first
         poll. Other sources remain immutable and return ``duplicate``.

@@ -4,7 +4,9 @@ Noema is local-first Personal Behavioral Intelligence.
 
 ## What stays local
 
-- Raw ActivityWatch events are read through a read-only local adapter.
+- Raw telemetry events are read through local collectors (native first;
+  an optional ActivityWatch instance may serve as a compatibility source
+  through a read-only local adapter).
 - The Noema SQLite database (`noema.sqlite3`) lives on your machine
   (default `%LOCALAPPDATA%\Noema` on Windows, `./noema.sqlite3` otherwise).
 - Sessions, meaningful sessions, presence, interventions, outcomes,
@@ -41,6 +43,6 @@ evidence needed for one compact classification or verification prompt:
   hosted tiers entirely; the chain then serves locally or fails
   honestly with work left pending.
 - Delete `noema.sqlite3` (and the adjacent `.usage.json` ledger) to
-  erase derived data. Exported ActivityWatch data, screenshots, and
+  erase derived data. Exported collector data, screenshots, and
   personal logs must never be committed to the public repository;
   only synthetic fixtures under `tests/` are published.
