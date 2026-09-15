@@ -1276,9 +1276,20 @@ Future ML should be driven by the intervention/outcome data collected by the sys
 `THIRD_PARTY_NOTICES.md` — third-party and dataset notices
 `LICENSE.txt` — MPL-2.0 license
 `CITATION.cff` — citation metadata
+`site/` — static landing page (see §41)
 ---
 40. License
 Noema is licensed under the Mozilla Public License 2.0.
 See `LICENSE.txt`.
 Third-party notices are documented in `THIRD_PARTY_NOTICES.md`.
 If you use or refer to Noema in research, please cite it according to `CITATION.cff`.
+---
+41. Landing page
+A static, presentation-only landing page lives in `site/`: `index.html`, `tokens.css`, `site.css`, `stages.js`, `app-link.js`. No build step, no server component, no new runtime dependency.
+It does not mount on the daemon's own `/` route. It is meant to be published separately, for example to GitHub Pages, and served with any static file host:
+```powershell
+python -m http.server -d site 8000
+```
+The page does not reimplement telemetry, classification, alignment, drift detection, intervention reasoning, Meme Center state, or outcomes. The daemon and the dashboard in `src/noema/api/dashboard/` remain the only real implementation of all of that; the landing page only composes copy from the domain contracts and documentation, and links out to it.
+A few CTAs point at the real local daemon, using its actual default address (`config/settings.py` `Settings.host` / `Settings.port`, `127.0.0.1:8765`): the dashboard root, its `#activities` and `#interventions` anchors, and `GET /api/daemon/health`. `site/app-link.js` probes `GET /health` (reading nothing back — it only checks whether something answers) to tell whether the daemon is reachable; when it is not, those links fall back to the install instructions in §24 instead of navigating to a dead connection.
+There is no dedicated Meme Center route in `site/`, because none exists yet in the dashboard — only the REST endpoints under `/api/meme-assets` do. The landing page does not invent one.
