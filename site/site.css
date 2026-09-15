@@ -1,0 +1,139 @@
+/* Noema landing page — page-level styles built on the Nocturne tokens in tokens.css. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(120% 60% at 12% -10%, #1d2033 0%, transparent 60%),
+    var(--color-bg);
+  min-height: 100vh;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--color-accent-300); text-decoration: none; }
+a:hover { color: var(--color-accent-200); }
+
+.mono { font-family: 'IBM Plex Mono', monospace; }
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-left: clamp(16px, 4vw, 32px);
+  padding-right: clamp(16px, 4vw, 32px);
+}
+
+/* — header / nav — */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  backdrop-filter: blur(14px);
+  background: color-mix(in srgb, #12141f 78%, transparent);
+  border-bottom: 1px solid var(--color-divider);
+}
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--color-text);
+}
+.brand-name { font-size: 14px; letter-spacing: .22em; }
+.brand-version { font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); }
+.nav-spacer { flex: 1 1 60px; }
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  letter-spacing: .1em;
+}
+.nav-link {
+  color: var(--color-neutral-400);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  transition: background 140ms ease, color 140ms ease;
+}
+.nav-link:hover {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  color: var(--color-text);
+}
+.nav-cta { font-size: 11px; letter-spacing: .1em; padding: 8px 14px; }
+
+/* — sections — */
+main section { border-top: 1px solid var(--color-divider); }
+main > .hero-section { border-top: none; }
+.section-pad { padding-top: clamp(48px, 7vw, 96px); padding-bottom: clamp(48px, 7vw, 96px); }
+.eyebrow { font-size: 11px; letter-spacing: .16em; color: var(--color-neutral-600); margin: 0 0 18px; }
+.bg-tint { background: #14161f; }
+
+/* — animation — */
+@keyframes noemaTrace { 0% { stroke-dashoffset: 260; } 100% { stroke-dashoffset: 0; } }
+@keyframes noemaPulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.pulse-dot { animation: noemaPulse 2.6s ease-in-out infinite; }
+.trace-path {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 1;
+  stroke-dasharray: 260;
+  stroke-dashoffset: 260;
+  opacity: .75;
+  animation: noemaTrace 2.8s ease-out forwards;
+}
+.trace-path.trace-b { animation-delay: .35s; }
+.trace-path:first-of-type { animation-delay: .1s; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { animation: none !important; transition: none !important; }
+  .trace-path { stroke-dashoffset: 0; }
+}
+
+/* — stage list (How Noema thinks) — */
+.stage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.stage-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  width: 100%;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--color-divider);
+  background: transparent;
+  color: var(--color-neutral-300);
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.stage-btn:hover:not([aria-pressed="true"]) {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.stage-btn[aria-pressed="true"] {
+  border-color: var(--color-accent-700);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent-100);
+}
+.stage-num { font-size: 10px; color: var(--color-neutral-700); width: 22px; text-align: left; flex: none; }
+.stage-id { letter-spacing: .1em; flex: 1; text-align: left; }
+.stage-kind { font-size: 10px; color: var(--color-neutral-600); }
+.stage-detail { position: sticky; top: 76px; }
+
+/* — real-app links (see app-link.js) — */
+.app-status { color: var(--color-neutral-600); transition: color 160ms ease; }
+.app-status.online { color: var(--color-accent-300); }
+.app-status.offline { color: var(--color-neutral-600); }
