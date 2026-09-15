@@ -121,6 +121,10 @@ class NoemaService:
         self.realtime_detector = DistractionCandidateDetector()
         self.detection_tracker = DetectionTracker()
         self.fast_verifier = None
+        # V4 intervention intelligence (wired by daemon/cli.py; None keeps
+        # the legacy reasoning-only path so minimal setups keep working).
+        self.intervention_reasoner = None
+        self.meme_decider = None
         # Observability hook (wired by daemon/cli.py to a TelemetryRecorder).
         # When None, all instrumentation below no-ops and product behavior
         # is unchanged. The layer observes; it never decides.
@@ -1640,6 +1644,310 @@ class NoemaService:
             "fast_verifier_configured": verifier is not None,
         }
 
+    def _reasoning_context(self, intent: Any = None, sessions: Any = None,
+                             class_map: Any = None, windows: Any = None,
+                             window: Any = None, decision: Any = None,
+                             goal_alignment: Any = None,
+                             presence_state: str = "unknown",
+                             current: Any = None) -> dict:
+        """Assemble the Gemini reasoning context from stored rows only.
+
+        Pure assembly (no model calls, never raises): goal text, current +
+        recent episode semantics, alignment relation, multi-window behavior
+        ratios, and presence. Missing pieces narrow the context instead of
+        failing, pushing the reasoner toward UNCERTAIN.
+        """
+        from noema.application.realtime.reasoning import build_reasoning_context
+
+        sessions = list(sessions or [])
+        class_map = dict(class_map or {})
+        windows = list(windows or [])
+        ratios = {}
+        for item in windows:
+            try:
+                ratios[int(getattr(item, "window_minutes", 0))] = float(
+                    getattr(item, "distraction_ratio", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        by_id = {}
+        for item in sessions:
+            try:
+                by_id[getattr(item, "id", None)] = item
+            except (AttributeError, TypeError):
+                continue
+        current_id = getattr(window, "current_session_id", None) if window is not None else None
+        current_session = by_id.get(current_id)
+        now = current
+        try:
+            ordered = sorted(
+                sessions,
+                key=lambda item: getattr(item, "end_time", getattr(item, "end", now)),
+                reverse=True,
+            )
+        except (AttributeError, TypeError):
+            ordered = sessions
+
+        def _episode_dict(item: Any, minutes_ago: Optional[float] = None,
+                          relation: Optional[str] = None) -> dict:
+            classification = None
+            try:
+                classification = class_map.get(getattr(item, "id", None))
+            except (AttributeError, TypeError):
+                classification = None
+            quality = ""
+            try:
+                quality = str(getattr(classification, "evidence_quality", "") or "")
+                if not quality:
+                    session_quality = getattr(item, "evidence_quality", None)
+                    quality = str(getattr(session_quality, "value", session_quality) or "")
+            except (AttributeError, TypeError, ValueError):
+                quality = ""
+            try:
+                duration = float(getattr(item, "duration", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                duration = 0.0
+            try:
+                active = float(getattr(item, "active_duration_seconds", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                active = 0.0
+            return {
+                "activity": getattr(item, "primary_task", None) or getattr(item, "primary_topic", None),
+                "category": getattr(classification, "category", None),
+                "activity_type": getattr(classification, "activity_type", None),
+                "duration_seconds": duration,
+                "active_duration_seconds": active,
+                "evidence_quality": quality.strip().lower() or None,
+                "confidence": getattr(classification, "confidence", 0.0),
+                "topic": getattr(classification, "topic", None),
+                "project": getattr(classification, "project", None),
+                "minutes_ago": minutes_ago,
+                "relation": relation,
+            }
+
+        recent = []
+        if now is not None and ordered:
+            for item in ordered:
+                try:
+                    item_id = getattr(item, "id", None)
+                except (AttributeError, TypeError):
+                    continue
+                if item_id == current_id or len(recent) >= 6:
+                    if len(recent) >= 6:
+                        break
+                    continue
+                try:
+                    end = getattr(item, "end_time", getattr(item, "end", None))
+                    ago = (now - end).total_seconds() / 60.0 if end is not None else None
+                except (AttributeError, TypeError, ValueError):
+                    ago = None
+                recent.append(_episode_dict(item, minutes_ago=ago))
+
+        goal = None
+        if intent is not None:
+            goal = {
+                "text": getattr(intent, "goal", None) or getattr(intent, "text", None),
+                "topic": getattr(intent, "topic", None),
+                "project": getattr(intent, "project", None),
+            }
+        alignment = None
+        if goal_alignment is not None:
+            try:
+                alignment = {
+                    "relation": None,
+                    "goal_relevance": None,
+                    "confidence": float(goal_alignment),
+                }
+            except (TypeError, ValueError):
+                alignment = None
+        behavior = {
+            "distraction_ratio_15m": ratios.get(15, 0.0),
+            "distraction_ratio_30m": ratios.get(30, 0.0),
+            "distraction_ratio_60m": ratios.get(60, 0.0),
+            "context_switches": getattr(window, "context_switch_count", 0) if window is not None else 0,
+            "time_since_productive_minutes": (
+                (getattr(window, "time_since_last_productive_session", None) or 0.0) / 60.0
+                if window is not None and getattr(window, "time_since_last_productive_session", None) is not None
+                else None),
+            "longest_run_minutes": (
+                float(getattr(window, "longest_distraction_run_seconds", 0.0) or 0.0) / 60.0
+                if window is not None else 0.0),
+            "candidate_score": getattr(decision, "score", 0.0) if decision is not None else 0.0,
+            "top_signals": list(getattr(decision, "reasons", []) or []) if decision is not None else [],
+        }
+        return build_reasoning_context(
+            goal=goal,
+            current_episode=_episode_dict(current_session) if current_session is not None else None,
+            recent_episodes=recent,
+            alignment=alignment,
+            behavior=behavior,
+            presence={"state": presence_state, "break_active": self._break_is_active(now=current)},
+        )
+
+    def _intervention_history(self, now: Optional[Any] = None) -> dict:
+        """Assemble bounded history for intervention reasoning.
+
+        Pure read assembly (never raises): the last few interventions with
+        their outcomes, current break state, and recent feedback verdicts.
+        Bounded so the prompt stays small and no history dump ever ships.
+        """
+        from noema.application.realtime.intervention import build_intervention_history
+
+        try:
+            recent = self.store.query_interventions(limit=5)
+        except (AttributeError, OSError, TypeError, ValueError):
+            recent = []
+        interventions: list = []
+        for item in recent:
+            outcome_status = None
+            try:
+                outcomes = self.store.query_outcomes(
+                    intervention_id=item.id, limit=1)
+                if outcomes:
+                    outcome_status = getattr(outcomes[0], "recovery_status", None)
+                    outcome_status = getattr(outcome_status, "value", outcome_status)
+            except (AttributeError, OSError, TypeError, ValueError):
+                outcome_status = None
+            try:
+                user_action = None
+                actions = self.store.query_intervention_actions(item.id, limit=100)
+                for action in actions:
+                    name = action.get("action") if isinstance(action, dict) else getattr(
+                        action, "action", None)
+                    if str(name or "").strip().lower() in {
+                            "lock_in", "clicked", "break_started", "intentional",
+                            "dismissed_as_working", "dismissed", "ignored",
+                            "auto_dismissed"}:
+                        user_action = str(name)
+                        break
+            except (AttributeError, OSError, TypeError, ValueError):
+                user_action = None
+            interventions.append({
+                "mode": getattr(getattr(item, "mode", None), "value", None),
+                "status": getattr(getattr(item, "status", None), "value", None),
+                "created_at": getattr(getattr(item, "created_at", None), "isoformat", lambda: None)(),
+                "outcome": outcome_status,
+                "user_action": user_action,
+            })
+        try:
+            outcomes = [
+                {"recovery_status": getattr(getattr(item, "recovery_status", None), "value", None),
+                 "intervention_type": getattr(item, "intervention_type", None),
+                 "attribution": getattr(item, "attribution", None),
+                 "recovery_duration_seconds": getattr(item, "recovery_duration_seconds", None)}
+                for item in self.store.query_outcomes(limit=5)
+            ]
+        except (AttributeError, OSError, TypeError, ValueError):
+            outcomes = []
+        try:
+            break_state = self.break_status(now=now)
+        except (AttributeError, OSError, TypeError, ValueError):
+            break_state = {"active": False}
+        try:
+            feedback = self.store.query_intervention_feedback(limit=10)
+        except (AttributeError, OSError, TypeError, ValueError):
+            feedback = []
+        return build_intervention_history(
+            recent_interventions=interventions,
+            recent_outcomes=outcomes,
+            break_state=break_state if isinstance(break_state, dict) else {},
+            recent_feedback=feedback if isinstance(feedback, list) else [],
+        )
+
+    def _decide_intervention(self, context: dict, now: Optional[Any] = None,
+                             telemetry: Optional[dict] = None) -> Optional[Any]:
+        """Run Gemini intervention reasoning over a fresh candidate.
+
+        Returns an InterventionDecision, or None when no reasoner is wired
+        (minimal setups keep the legacy reasoning-only path) or when the
+        context is unusable. A declined decision is a valid decision, not
+        None — callers must distinguish "no reasoner" from "reasoner said
+        no". Never raises for provider reasons.
+        """
+        reasoner = getattr(self, "intervention_reasoner", None)
+        if reasoner is None:
+            return None
+        try:
+            history = self._intervention_history(now=now)
+        except (AttributeError, OSError, TypeError, ValueError):
+            history = {}
+        try:
+            return reasoner.reason(context, history, telemetry=telemetry)
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _break_is_active(self, now: Optional[Any] = None) -> bool:
+        """True when an intentional break is currently in effect."""
+        try:
+            return bool(self.break_status(now=now).get("active", False))
+        except (AttributeError, TypeError, ValueError, OSError):
+            return False
+
+    # -- V3 intentional break state ------------------------------------
+    # A user-declared break (5 MIN BREAK action) suppresses drift
+    # *interventions* until expiry. It never touches classification,
+    # alignment, or the tracker: break browsing still classifies honestly,
+    # it just cannot trigger. State lives in daemon_state (ephemeral keys;
+    # absent keys mean no break). Capped duration prevents break-as-mute.
+
+    BREAK_STATE_KEY = "break.active_until"
+    BREAK_STARTED_KEY = "break.started_at"
+    BREAK_MAX_MINUTES = 30.0
+    BREAK_DEFAULT_MINUTES = 5.0
+
+    def start_break(self, minutes: Optional[float] = None,
+                    now: Optional[Any] = None) -> dict:
+        """Begin an intentional break. Returns the break status dict."""
+        try:
+            duration = float(minutes if minutes is not None else self.BREAK_DEFAULT_MINUTES)
+        except (TypeError, ValueError):
+            duration = self.BREAK_DEFAULT_MINUTES
+        duration = min(max(0.5, duration), self.BREAK_MAX_MINUTES)
+        moment = coerce_timestamp(now) if now is not None else datetime.now(timezone.utc)
+        active_until = moment + timedelta(minutes=duration)
+        try:
+            self.store.set_state(self.BREAK_STATE_KEY, active_until.isoformat().replace("+00:00", "Z"))
+            self.store.set_state(self.BREAK_STARTED_KEY, moment.isoformat().replace("+00:00", "Z"))
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        return self.break_status(now=moment)
+
+    def clear_break(self) -> None:
+        """End any active break immediately (e.g. user locked back in)."""
+        try:
+            self.store.delete_state(self.BREAK_STATE_KEY)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        try:
+            self.store.delete_state(self.BREAK_STARTED_KEY)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+
+    def break_status(self, now: Optional[Any] = None) -> dict:
+        """Report break state; lazily clears expired breaks."""
+        moment = coerce_timestamp(now) if now is not None else datetime.now(timezone.utc)
+        raw_until, raw_started = None, None
+        try:
+            raw_until = self.store.get_state(self.BREAK_STATE_KEY)
+            raw_started = self.store.get_state(self.BREAK_STARTED_KEY)
+        except (AttributeError, OSError, TypeError, ValueError):
+            raw_until, raw_started = None, None
+        if not raw_until:
+            return {"active": False, "active_until": None, "started_at": raw_started}
+        try:
+            active_until = coerce_timestamp(raw_until)
+        except (AttributeError, TypeError, ValueError):
+            self.clear_break()
+            return {"active": False, "active_until": None, "started_at": None}
+        if moment >= active_until:
+            self.clear_break()
+            return {"active": False, "active_until": None, "started_at": None,
+                    "just_ended": True}
+        remaining = max(0.0, (active_until - moment).total_seconds())
+        return {"active": True,
+                "active_until": active_until.isoformat().replace("+00:00", "Z"),
+                "started_at": raw_started,
+                "remaining_seconds": round(remaining, 1)}
+
     def evaluate_realtime(self, now: Optional[Any] = None,
                           execute_intervention: bool = True) -> dict:
         """Run one real-time evaluation: windows → score → hysteresis.
@@ -1688,11 +1996,14 @@ class NoemaService:
 
         def _record(window: Any, decision: Any, tracker_state: str,
                     decision_name: str, reason: str,
-                    verification: Any = None) -> dict:
+                    verification: Any = None, reasoning: Any = None,
+                    intervention_decision: Any = None) -> dict:
             if verification is not None and not verification.skipped:
                 model_verdict = "concerning" if verification.concerning else "not_concerning"
             else:
                 model_verdict = None
+            if reasoning is not None and not reasoning.skipped:
+                model_verdict = str(reasoning.state).lower()
             record = DetectionRecord(
                 detection_id=detection_id(
                     evaluated_at, window.current_session_id,
@@ -1710,15 +2021,31 @@ class NoemaService:
                 tracker_state=tracker_state,
                 model_verdict=model_verdict,
                 model_confidence=(
-                    verification.confidence if verification is not None else None),
-                severity=(verification.severity if verification is not None else None),
+                    (reasoning.confidence if reasoning is not None
+                     else verification.confidence) if (reasoning or verification) is not None else None),
+                severity=((reasoning.severity if reasoning is not None
+                           else verification.severity) if (reasoning or verification) is not None else None),
                 recommended_intervention=(
-                    verification.recommended_intervention if verification is not None else None),
-                provider=(verification.provider if verification is not None else None),
-                model=(verification.model if verification is not None else None),
-                latency_ms=(verification.latency_ms if verification is not None else None),
+                    reasoning.recommended_response_class if reasoning is not None
+                    else (verification.recommended_intervention if verification is not None else None)),
+                provider=((reasoning.provider if reasoning is not None
+                           else verification.provider) if (reasoning or verification) is not None else None),
+                model=((reasoning.model if reasoning is not None
+                        else verification.model) if (reasoning or verification) is not None else None),
+                latency_ms=((reasoning.latency_ms if reasoning is not None
+                             else verification.latency_ms) if (reasoning or verification) is not None else None),
                 decision=decision_name,
                 reason=reason,
+                reasoning_json=_json.dumps(
+                    reasoning.to_dict() if reasoning is not None else {},
+                    sort_keys=True, default=str),
+                reasoning_version=(
+                    reasoning.reasoning_version if reasoning is not None else None),
+                response_class=(
+                    reasoning.recommended_response_class if reasoning is not None else None),
+                intervention_json=_json.dumps(
+                    intervention_decision.to_dict() if intervention_decision is not None else {},
+                    sort_keys=True, default=str),
             )
             try:
                 self.store.insert_detection(record)
@@ -1749,6 +2076,30 @@ class NoemaService:
                 "state": state,
                 "presence": "afk",
                 "action": "none (AFK veto)",
+                "tracker": tracker.to_dict(),
+            }
+        try:
+            break_info = self.break_status(now=current)
+        except (AttributeError, TypeError, ValueError, OSError):
+            break_info = {"active": False}
+        break_active = bool(break_info.get("active", False))
+        if break_active:
+            # Intentional-break veto: the user declared this time. No
+            # scoring, no model, no action — the tracker decays naturally
+            # and classification/alignment continue untouched. No detection
+            # row is written (there is no window to attribute it to); the
+            # break itself is visible via break status.
+            state = tracker.update(0.0, current)
+            _persist_tracker()
+            self._record_realtime_eval(
+                request_id, mark, eval_started, state, presence_state,
+                None, None, None, [], tracker)
+            return {
+                "evaluated_at": evaluated_at,
+                "state": state,
+                "presence": presence_state,
+                "break": break_info,
+                "action": "none (break active)",
                 "tracker": tracker.to_dict(),
             }
 
@@ -1804,6 +2155,9 @@ class NoemaService:
         previous_state = tracker.state
         state = tracker.update(decision.score, current)
         verification = None
+        reasoning = None
+        confirmed_reasoning = None
+        confirmed_decision = None
         intervention_payload = None
         detections = []
         fresh_candidate = (
@@ -1812,40 +2166,73 @@ class NoemaService:
             and decision.is_candidate
         )
         if fresh_candidate:
-            # The ONLY model call in this time scale, and only on entry.
+            # The ONLY model call in this time scale, and only on entry:
+            # Gemini contextual reasoning over the assembled episode +
+            # alignment + goal evidence (advisory only; policy still decides).
             verifier = getattr(self, "fast_verifier", None)
-            if verifier is not None:
+            reasoning = None
+            if verifier is not None and hasattr(verifier, "verify_reasoning"):
                 try:
-                    verification = verifier.verify(
-                        window.compact_summary(), decision.score,
-                        decision.reasons, presence_state=presence_state,
+                    reasoning = verifier.verify_reasoning(
+                        self._reasoning_context(
+                            intent=intent, sessions=sessions,
+                            class_map=class_map, windows=windows,
+                            window=window, decision=decision,
+                            goal_alignment=goal_alignment,
+                            presence_state=presence_state, current=current),
                         telemetry={"request_id": request_id})
                 except (AttributeError, TypeError, ValueError) as exc:
-                    verification = None
+                    reasoning = None
                     detections.append(_record(
                         window, decision, state, "verification_error",
-                        "verifier raised: {}: {}".format(
+                        "reasoner raised: {}: {}".format(
                             type(exc).__name__, str(exc)[:160])))
-            if verification is None:
+            if reasoning is None and verifier is None:
                 detections.append(_record(
                     window, decision, state, "candidate_detected",
                     "candidate entered (score {:.2f}); no verifier configured".format(
                         decision.score)))
-            elif verification.concerning:
-                state = tracker.notify_confirmed(decision.score, current)
-                detections.append(_record(
-                    window, decision, state, "verified_concerning",
-                    "fast model confirmed concern (severity {}, {}): {}".format(
-                        verification.severity,
-                        verification.recommended_intervention,
-                        verification.reason),
-                    verification=verification))
-            else:
+            elif reasoning is not None and reasoning.may_confirm:
+                # Second Gemini opinion: intervention reasoning decides
+                # WHETHER and HOW to act (strategy, tone, meme need). A
+                # decline leaves the candidate to decay naturally — never
+                # forced into an intervention.
+                intervention_decision = self._decide_intervention(
+                    self._reasoning_context(
+                        intent=intent, sessions=sessions,
+                        class_map=class_map, windows=windows,
+                        window=window, decision=decision,
+                        goal_alignment=goal_alignment,
+                        presence_state=presence_state, current=current),
+                    now=current,
+                    telemetry={"request_id": request_id})
+                if intervention_decision is not None and not intervention_decision.should_intervene:
+                    detections.append(_record(
+                        window, decision, state, "reasoning_declined",
+                        "intervention reasoning declined ({}): {}".format(
+                            intervention_decision.intervention_type,
+                            intervention_decision.reason),
+                        reasoning=reasoning,
+                        intervention_decision=intervention_decision))
+                else:
+                    state = tracker.notify_confirmed(decision.score, current)
+                    confirmed_reasoning = reasoning
+                    confirmed_decision = intervention_decision
+                    detections.append(_record(
+                        window, decision, state, "verified_concerning",
+                        "reasoning confirmed drift ({} severity {}, {}): {}".format(
+                            reasoning.state,
+                            reasoning.severity,
+                            reasoning.recommended_response_class,
+                            reasoning.reason),
+                        reasoning=reasoning,
+                        intervention_decision=intervention_decision))
+            elif reasoning is not None:
                 detections.append(_record(
                     window, decision, state, "verified_not_concerning",
-                    "fast model did not confirm concern: {}".format(
-                        verification.reason),
-                    verification=verification))
+                    "reasoning did not confirm drift ({}): {}".format(
+                        reasoning.state, reasoning.reason),
+                    reasoning=reasoning))
         mark["verify"] = _time.perf_counter()
         if state == "CONFIRMED":
             # Act only on existing behavior evidence: an actionable
@@ -1869,6 +2256,8 @@ class NoemaService:
                         intent_id=getattr(intent, "id", None),
                         execute=execute_intervention,
                         now=current,
+                        reasoning=confirmed_reasoning,
+                        intervention_decision=confirmed_decision,
                     )
                 except (AttributeError, TypeError, ValueError, OSError):
                     intervention = None
@@ -1887,17 +2276,18 @@ class NoemaService:
                                 intervention.mode.value if intervention.mode else "?",
                                 intervention.id[:8],
                                 intervention.reason),
-                            verification=verification))
+                            verification=verification, reasoning=reasoning))
                     else:
                         detections.append(_record(
                             window, decision, state, "intervention_skipped",
                             "intervention not executed: {}".format(intervention.reason),
-                            verification=verification))
+                            verification=verification, reasoning=reasoning))
         mark["policy"] = _time.perf_counter()
         _persist_tracker()
         self._record_realtime_eval(
             request_id, mark, eval_started, state, presence_state,
-            decision, verification, intervention_payload, detections, tracker)
+            decision, verification, intervention_payload, detections, tracker,
+            reasoning=reasoning)
         return {
             "evaluated_at": evaluated_at,
             "state": state,
@@ -1906,6 +2296,7 @@ class NoemaService:
             "window": window.to_dict(),
             "decision": decision.to_dict(),
             "verification": verification.to_dict() if verification is not None else None,
+            "reasoning": reasoning.to_dict() if reasoning is not None else None,
             "intervention": intervention_payload,
             "detections": detections,
             "tracker": tracker.to_dict(),
@@ -1915,7 +2306,8 @@ class NoemaService:
                                 eval_started: float, state: str,
                                 presence_state: str, decision: Any,
                                 verification: Any, intervention_payload: Any,
-                                detections: list, tracker: Any) -> None:
+                                detections: list, tracker: Any,
+                                reasoning: Any = None) -> None:
         """Persist one realtime-evaluation timing record (never raises)."""
         import time as _time
 
@@ -1940,6 +2332,12 @@ class NoemaService:
                 bool(verification.concerning) if verification is not None else None),
             "verification_latency_ms": (
                 verification.latency_ms if verification is not None else None),
+            "reasoning_state": (
+                reasoning.state if reasoning is not None else None),
+            "reasoning_worthwhile": (
+                bool(reasoning.intervention_worthwhile) if reasoning is not None else None),
+            "reasoning_latency_ms": (
+                reasoning.latency_ms if reasoning is not None else None),
             "intervention": intervention_payload,
             "detection_ids": [item.get("detection_id") for item in detections
                               if isinstance(item, dict) and item.get("detection_id")],
@@ -2292,6 +2690,208 @@ class NoemaService:
     def query_behavior(self, *args: Any, **kwargs: Any) -> list:
         return self.store.query_behavior_observations(*args, **kwargs)
 
+    def _apply_curated_response(
+        self,
+        intervention: Intervention,
+        session: Any,
+        intent: Optional[Any],
+        classification: Optional[Any],
+        reasoning: Optional[Any] = None,
+        intervention_decision: Optional[Any] = None,
+        now: Optional[Any] = None,
+    ) -> Intervention:
+        """Resolve a curated registry response into a planned intervention.
+
+        The intervention decision (or the legacy reasoning class, or the
+        mode default) selects one deterministic artifact; copy slots render
+        from stored episode/goal strings only, optionally overridden by a
+        bounded Gemini-drafted line. An empty/ineligible registry falls
+        back to the heuristic payload untouched.
+        """
+        from noema.application.realtime.intervention import (
+            RESPONSE_CLASS_TO_SELECTOR_CLASS,
+            TONE_TO_RESPONSE_TONE,
+        )
+        from noema.domain.response import select_response
+
+        try:
+            self.store.seed_responses()
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        mode = intervention.mode
+        mode_name = mode.value if mode is not None else ""
+        decision = intervention_decision
+        if decision is not None and not bool(getattr(decision, "should_intervene", False)):
+            # A declined decision must never resolve into an artifact.
+            return intervention
+        response_class = None
+        preferred_tone = None
+        severity_override = None
+        meme_intent = None
+        if decision is not None:
+            response_class = RESPONSE_CLASS_TO_SELECTOR_CLASS.get(
+                str(getattr(decision, "response_class", "") or "").strip().upper(), "NONE")
+            preferred_tone = TONE_TO_RESPONSE_TONE.get(
+                str(getattr(decision, "tone", "") or "").strip().upper())
+            try:
+                severity_override = int(getattr(decision, "severity", 0) or 0)
+            except (TypeError, ValueError):
+                severity_override = None
+            meme_intent = getattr(decision, "meme_intent", None)
+        if reasoning is not None and response_class in (None, "NONE"):
+            response_class = getattr(reasoning, "recommended_response_class", None)
+        if not response_class or str(response_class).strip().upper() == "NONE":
+            response_class = "MEME" if mode_name == "MEME" else "GENTLE"
+        try:
+            severity = int((dict(intervention.payload).get("severity")) or 2)
+        except (TypeError, ValueError):
+            severity = 2
+        if severity_override in (1, 2, 3, 4, 5):
+            severity = severity_override
+        goal = None
+        if intent is not None:
+            goal = getattr(intent, "goal", None) or getattr(intent, "text", None)
+        distraction = None
+        if classification is not None:
+            distraction = getattr(classification, "topic", None) or getattr(
+                classification, "category", None)
+        minutes_away = None
+        try:
+            minutes_away = float(getattr(session, "duration", 0.0) or 0.0) / 60.0
+        except (TypeError, ValueError):
+            minutes_away = None
+        try:
+            registry = self.store.query_responses()
+        except (AttributeError, OSError, TypeError, ValueError):
+            return intervention
+        selection = select_response(
+            response_class=response_class, mode=mode_name, severity=severity,
+            context_tags=(), registry=registry, now=now,
+            preferred_tone=preferred_tone)
+        if selection.fallback or selection.response is None:
+            return intervention
+        response = selection.response
+        rendered = response.render(goal=goal, minutes_away=minutes_away,
+                                   distraction=distraction)
+        generated_copy = self._generate_response_copy(
+            response=response, goal=goal, distraction=distraction,
+            minutes_away=minutes_away, tone=preferred_tone,
+            session_id=getattr(session, "id", None))
+        body = generated_copy or rendered["body"]
+        payload = dict(intervention.payload)
+        payload["response_id"] = response.id
+        payload["response_kind"] = response.kind
+        payload["response_tone"] = response.tone
+        if decision is not None:
+            payload["intervention_decision"] = {
+                "should_intervene": bool(getattr(decision, "should_intervene", False)),
+                "intervention_type": getattr(decision, "intervention_type", None),
+                "severity": getattr(decision, "severity", None),
+                "tone": getattr(decision, "tone", None),
+                "response_class": getattr(decision, "response_class", None),
+                "use_meme": bool(getattr(decision, "use_meme", False)),
+                "confidence": getattr(decision, "confidence", None),
+            }
+        try:
+            away = int(minutes_away) if minutes_away is not None else None
+        except (TypeError, ValueError):
+            away = None
+        if away is not None and goal:
+            payload["context_line"] = (
+                "You've spent {} minutes away from {}.".format(away, goal))
+        message = dict(payload.get("message") or {})
+        message["title"] = response.title
+        message["body"] = body
+        payload["message"] = message
+        if response.kind in {"MEME", "CHARACTER", "STICKER"}:
+            payload["meme"] = {
+                "template": "drake",
+                "top": str(goal).strip() if goal else "Your active goal",
+                "bottom": body,
+            }
+            payload["svg_asset"] = response.asset_id
+            # Meme Center assets resolve to a loopback image URL the
+            # overlay may load (extension host permissions already cover
+            # 127.0.0.1:8765). Absent when the asset is unknown locally —
+            # the overlay then falls back to the SVG/text rendering.
+            ranked_asset_id = self._select_meme_asset(
+                response=response, meme_intent=meme_intent,
+                goal=goal, severity=severity,
+                session_id=getattr(session, "id", None))
+            try:
+                asset = self.store.get_meme_asset(ranked_asset_id) if ranked_asset_id else None
+            except (AttributeError, OSError, TypeError, ValueError):
+                asset = None
+            if asset is not None:
+                payload["image_url"] = "/api/meme-assets/{}/image".format(asset.id)
+                payload["meme_asset"] = {"id": asset.id, "filename": asset.filename}
+        payload["actions"] = ("LOCK_IN", "BREAK_5MIN", "INTENTIONAL", "DISMISS")
+        return replace(intervention, payload=payload)
+
+    def _select_meme_asset(self, response: Any, meme_intent: Optional[Any] = None,
+                           goal: Any = None, severity: int = 3,
+                           session_id: Optional[str] = None) -> Optional[str]:
+        """Resolve the best meme asset for a response (deterministic first).
+
+        Uses the response's own linked asset when it resolves locally;
+        otherwise retrieves candidates and ranks them with one bounded
+        Gemini call. Any ranking failure falls back to the top retrieved
+        candidate; with no candidates, None (text rendering proceeds).
+        """
+        from noema.application.meme_decision import (
+            MEME_CANDIDATE_LIMIT,
+            retrieve_meme_candidates,
+        )
+
+        linked = getattr(response, "asset_id", None)
+        if linked:
+            try:
+                if self.store.get_meme_asset(linked) is not None:
+                    return str(linked)
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
+        try:
+            candidates = retrieve_meme_candidates(
+                self.store, meme_intent=meme_intent,
+                tone=getattr(response, "tone", None),
+                severity=severity, limit=MEME_CANDIDATE_LIMIT)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+        if not candidates:
+            return None
+        decider = getattr(self, "meme_decider", None)
+        if decider is None:
+            return str(candidates[0].get("id"))
+        try:
+            ranking = decider.rank(
+                candidates, goal=goal, severity=severity,
+                episode_id=session_id)
+        except (AttributeError, TypeError, ValueError):
+            return str(candidates[0].get("id"))
+        selected = getattr(ranking, "selected_asset_id", None)
+        if selected and any(str(item.get("id")) == str(selected) for item in candidates):
+            return str(selected)
+        return str(candidates[0].get("id"))
+
+    def _generate_response_copy(self, response: Any, goal: Any = None,
+                                distraction: Any = None,
+                                minutes_away: Any = None,
+                                tone: Any = None,
+                                session_id: Optional[str] = None) -> Optional[str]:
+        """Draft one constrained contextual line, or None to keep template."""
+        decider = getattr(self, "meme_decider", None)
+        if decider is None:
+            return None
+        generate = getattr(decider, "generate_copy", None)
+        if not callable(generate):
+            return None
+        try:
+            return generate(
+                goal=goal, activity=distraction, minutes_away=minutes_away,
+                tone=tone or getattr(response, "tone", None))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
     def consider_intervention(
         self,
         session_id: str,
@@ -2299,6 +2899,8 @@ class NoemaService:
         execute: bool = False,
         handler: Optional[Any] = None,
         now: Optional[Any] = None,
+        reasoning: Optional[Any] = None,
+        intervention_decision: Optional[Any] = None,
     ) -> Intervention:
         observations = [item for item in self.store.query_behavior_observations(limit=100000) if item.session_id == session_id]
         sessions = [item for item in self.store.query_meaningful_sessions(limit=100000) if item.id == session_id]
@@ -2308,6 +2910,19 @@ class NoemaService:
             raise ValueError("behavior observation not found: {}".format(session_id))
         if not sessions:
             raise ValueError("session not found: {}".format(session_id))
+        if self._break_is_active(now=now):
+            # Semantic-lane guard mirroring the realtime veto: an active
+            # intentional break suppresses drift interventions on every lane.
+            from noema.domain.intervention import Intervention as _Intervention
+            from noema.domain.intervention import InterventionStatus as _Status
+
+            skipped = _Intervention(
+                session_id=session_id, mode=None, status=_Status.SKIPPED,
+                reason="intentional break active; drift interventions suppressed",
+                created_at=now if now is not None else datetime.now(timezone.utc))
+            with self._observe_db("intervention_write"):
+                self.store.insert_intervention(skipped)
+            return skipped
         intents = [item for item in self.store.query_intents(limit=100000) if item.id == intent_id] if intent_id else []
         classifications = self.store.query_classifications(session_id=session_id, limit=1)
         try:
@@ -2343,6 +2958,21 @@ class NoemaService:
                 intervention = replace(intervention, payload=payload)
             except (AttributeError, OSError, TypeError, ValueError):
                 pass
+        if intervention.status == InterventionStatus.PLANNED and intervention.mode is not None:
+            # V3 curated response selection: the reasoning class (or the
+            # mode default when reasoning is unavailable) resolves to one
+            # registry artifact. Free model text never reaches the screen
+            # through this path; an empty registry falls back to the
+            # heuristic payload already built above.
+            intervention = self._apply_curated_response(
+                intervention,
+                sessions[0],
+                intents[0] if intents else None,
+                classifications[0] if classifications else None,
+                reasoning=reasoning,
+                intervention_decision=intervention_decision,
+                now=now,
+            )
         if intervention.status == InterventionStatus.PLANNED and not intervention.action.target.get("tab_id"):
             live_target = self.browser_bridge.current_target(
                 device_id=getattr(sessions[0], "device", None),
@@ -2373,6 +3003,17 @@ class NoemaService:
                     target=intervention.action.target,
                     metadata={"reason": intervention.reason},
                 )
+            response_id = dict(intervention.payload).get("response_id")
+            if response_id and not any(
+                    item["action"] == "response_selected" for item in existing_actions):
+                self.store.record_intervention_action(
+                    intervention.id,
+                    "response_selected",
+                    state=intervention.status.value,
+                    target=intervention.action.target,
+                    metadata={"response_id": response_id,
+                              "response_kind": dict(intervention.payload).get("response_kind")},
+                )
         if execute and intervention.status == InterventionStatus.EXECUTED:
             delivery = self.browser_bridge.publish(intervention)
             self.store.record_intervention_action(
@@ -2382,6 +3023,15 @@ class NoemaService:
                 target=intervention.action.target,
                 metadata=delivery.to_dict(),
             )
+            if delivery.status in {"DELIVERED", "QUEUED"}:
+                # Display-path counter: only actual sends count toward
+                # response effectiveness, never plans or suppressions.
+                response_id = dict(intervention.payload).get("response_id")
+                if response_id:
+                    try:
+                        self.store.record_response_shown(response_id)
+                    except (AttributeError, OSError, TypeError, ValueError):
+                        pass
             if delivery.status == "NO_EXACT_TARGET" and intervention.mode != InterventionMode.HOLDOUT:
                 fallback = self.notification_handler.send(intervention)
                 self.store.record_intervention_action(
@@ -2553,7 +3203,49 @@ class NoemaService:
             "AUTO_DISMISSED": "auto_dismissed",
             "IGNORED": "ignored",
             "RECOVERED": "recovered",
+            "BREAK_STARTED": "break_started",
+            "BREAK_ENDED": "break_ended",
+            "INTENTIONAL": "intentional",
+            "BREAK_5MIN": "break_started",
         }.get(str(action).strip().upper(), str(action).strip().casefold())
+        try:
+            if normalized_action == "break_started" and not str(action).strip().upper().startswith("BREAK_ENDED"):
+                # 5 MIN BREAK: user declares an intentional break. Drift
+                # interventions suppress until expiry; returning early
+                # clears it (see LOCK_IN below).
+                minutes = None
+                if isinstance(metadata, dict):
+                    minutes = metadata.get("minutes")
+                self.start_break(minutes=minutes)
+            elif normalized_action == "lock_in":
+                # LOCK IN accepts the interpretation and re-engages: any
+                # active break ends immediately.
+                self.clear_break()
+            elif normalized_action == "intentional":
+                # THIS IS INTENTIONAL rejects the interpretation (or
+                # declares the activity intentional): interpretation-negative
+                # feedback, kept separate from classification correctness.
+                # It also ends a break started from the same card, since the
+                # user is explicitly present and deciding.
+                self.clear_break()
+                self.store.insert_intervention_feedback(
+                    str(intervention_id), "INTERPRETATION", "WRONG",
+                    note="user marked intervention as intentional",
+                    source="user-action",
+                )
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        if normalized_action in {"clicked", "lock_in"}:
+            # Engagement counter for the served response (analysis reads
+            # recovery, never clicks — but clicks are still recorded).
+            try:
+                stored = self.store.get_intervention(str(intervention_id))
+                response_id = (dict(stored.payload).get("response_id")
+                               if stored is not None else None)
+                if response_id:
+                    self.store.record_response_clicked(response_id)
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
         return {
             "id": row_id,
             "intervention_id": str(intervention_id),
@@ -2637,6 +3329,368 @@ class NoemaService:
     def query_memes(self, *args: Any, **kwargs: Any) -> list:
         return self.store.query_memes(*args, **kwargs)
 
+    # -- V3 Phase 10: Meme Center asset catalog --------------------------
+    # Assets live in the local dataset directory (never in git, never in
+    # behavioral tables). Directories resolve in order: explicit argument,
+    # service attribute (wired from daemon config), environment variable.
+
+    def meme_dataset_dir(self, override: Optional[str] = None) -> str:
+        import os as _os
+
+        for candidate in (
+            override,
+            getattr(self, "_meme_dataset_dir", None),
+            _os.environ.get("NOEMA_MEME_DATASET_DIR"),
+        ):
+            if candidate and str(candidate).strip():
+                return str(candidate)
+        return ""
+
+    def meme_thumbs_dir(self, override: Optional[str] = None) -> str:
+        import os as _os
+
+        for candidate in (
+            override,
+            getattr(self, "_meme_thumbs_dir", None),
+            _os.environ.get("NOEMA_MEME_THUMBS_DIR"),
+        ):
+            if candidate and str(candidate).strip():
+                return str(candidate)
+        return ""
+
+    def query_meme_assets(self, search: Optional[str] = None,
+                          sentiment: Optional[str] = None,
+                          status: str = "all", limit: int = 60,
+                          offset: int = 0) -> dict:
+        return self.store.query_meme_assets(
+            search=search, sentiment=sentiment, status=status,
+            limit=limit, offset=offset)
+
+    def get_meme_asset(self, asset_id: str) -> Optional[dict]:
+        from noema.domain.meme import MemeAsset  # noqa: F401 (re-export guard)
+
+        asset = self.store.get_meme_asset(asset_id)
+        if asset is None:
+            return None
+        payload = asset.to_dict(
+            response_count=len(self.store.asset_responses(asset.id)))
+        payload["responses"] = [
+            {"id": item.id, "kind": item.kind, "tone": item.tone,
+             "enabled": item.enabled}
+            for item in self.store.asset_responses(asset.id)
+        ]
+        return payload
+
+    def favorite_meme_asset(self, asset_id: str, favorite: bool = True) -> dict:
+        if self.store.get_meme_asset(asset_id) is None:
+            raise ValueError("unknown meme asset: {}".format(asset_id))
+        self.store.set_asset_favorite(asset_id, favorite)
+        updated = self.get_meme_asset(asset_id)
+        assert updated is not None
+        return updated
+
+    def set_meme_asset_tags(self, asset_id: str, tags: Any) -> dict:
+        if self.store.get_meme_asset(asset_id) is None:
+            raise ValueError("unknown meme asset: {}".format(asset_id))
+        if isinstance(tags, str):
+            tags = [part for part in tags.split(",")]
+        self.store.set_asset_tags(asset_id, tags or [])
+        updated = self.get_meme_asset(asset_id)
+        assert updated is not None
+        return updated
+
+    def set_meme_asset_enabled(self, asset_id: str, enabled: bool = True) -> dict:
+        if self.store.get_meme_asset(asset_id) is None:
+            raise ValueError("unknown meme asset: {}".format(asset_id))
+        self.store.set_asset_enabled(asset_id, enabled)
+        updated = self.get_meme_asset(asset_id)
+        assert updated is not None
+        return updated
+
+    def meme_asset_stats(self) -> dict:
+        return self.store.meme_asset_stats()
+
+    def ingest_meme_dataset(self, csv_path: str, images_dir: str,
+                            thumbs_dir: Optional[str] = None,
+                            make_thumbs: bool = True) -> dict:
+        """Index a local meme corpus into the asset catalog (idempotent)."""
+        from noema.application.meme_assets import default_thumbs_dir, ingest_dataset
+
+        resolved_thumbs = thumbs_dir or self.meme_thumbs_dir() or default_thumbs_dir(
+            getattr(self.store, "path", None))
+        with self._observe_db("meme_asset_ingest"):
+            stats = ingest_dataset(
+                csv_path, images_dir, self.store,
+                thumbs_dir=resolved_thumbs if make_thumbs else None,
+                make_thumbs=make_thumbs)
+        return stats
+
+    def meme_asset_image_path(self, asset_id: str, thumb: bool = False) -> Optional[str]:
+        """Resolve an asset to a local image file (traversal-safe)."""
+        import os as _os
+
+        from noema.application.meme_assets import (
+            resolve_image_path,
+            thumbnail_path,
+        )
+
+        asset = self.store.get_meme_asset(asset_id)
+        if asset is None:
+            return None
+        dataset_dir = self.meme_dataset_dir()
+        if not dataset_dir:
+            return None
+        if thumb:
+            thumbs_dir = self.meme_thumbs_dir() or _os.path.join(dataset_dir, ".thumbs")
+            candidate = thumbnail_path(thumbs_dir, asset.id)
+            if _os.path.isfile(candidate):
+                return candidate
+        return resolve_image_path(dataset_dir, asset.filename)
+
+    def create_response_from_asset(self, asset_id: str, fields: Dict[str, Any]) -> dict:
+        """Curate one asset into an intervention-ready Response.
+
+        The asset stays untouched; a new Response row points at it via
+        ``asset_id``. One asset may back many responses.
+        """
+        from noema.domain.response import Response
+
+        asset = self.store.get_meme_asset(asset_id)
+        if asset is None:
+            raise ValueError("unknown meme asset: {}".format(asset_id))
+        fields = dict(fields or {})
+        response = Response(
+            id=str(fields.get("id") or "resp-{}-{}".format(
+                asset.id[:8], len(self.store.asset_responses(asset.id)) + 1)),
+            kind=fields.get("kind", "MEME"),
+            tone=fields.get("tone", "gentle"),
+            title=fields.get("title", "Noema"),
+            body_template=fields.get("body_template", ""),
+            asset_id=asset.id,
+            severity_min=fields.get("severity_min", 1),
+            severity_max=fields.get("severity_max", 5),
+            context_tags=tuple(fields.get("context_tags", ())),
+            cooldown_seconds=fields.get("cooldown_seconds", 3600.0),
+            enabled=fields.get("enabled", True),
+        )
+        with self._observe_db("response_create"):
+            self.store.insert_response(response)
+        stored = self.store.get_response(response.id)
+        assert stored is not None
+        return stored.to_dict()
+
+    def update_response(self, response_id: str, fields: Dict[str, Any]) -> dict:
+        """Edit a curated response (validates asset linkage + model)."""
+        fields = dict(fields or {})
+        if "asset_id" in fields and fields["asset_id"] is not None:
+            if self.store.get_meme_asset(str(fields["asset_id"])) is None:
+                raise ValueError("unknown meme asset: {}".format(fields["asset_id"]))
+        updated = self.store.update_response(response_id, fields)
+        if updated is None:
+            raise ValueError("unknown response: {}".format(response_id))
+        return updated.to_dict()
+
+    def test_response_delivery(self, response_id: str,
+                               context: Optional[Dict[str, Any]] = None) -> dict:
+        """Exercise the real delivery path with zero persistence.
+
+        Builds the exact overlay payload for a curated response and runs
+        it through ``browser_bridge.publish`` (+ toast fallback), but
+        writes nothing: no intervention row, no counters, no outcomes, no
+        detections, no behavioral state. Test traffic can never pollute
+        effectiveness statistics by construction.
+        """
+        from noema.domain.intervention import Intervention, InterventionMode, InterventionStatus
+
+        stored = self.store.get_response(response_id)
+        if stored is None:
+            raise ValueError("unknown response: {}".format(response_id))
+        context = dict(context or {})
+        rendered = stored.render(
+            goal=context.get("goal") or "Power Electronics",
+            minutes_away=context.get("minutes_away", 28),
+            distraction=context.get("distraction") or "browsing",
+        )
+        payload: Dict[str, Any] = {
+            "response_id": stored.id,
+            "response_kind": stored.kind,
+            "response_tone": stored.tone,
+            "message": {"title": stored.title, "body": rendered["body"]},
+            "context_line": "PREVIEW — not a real intervention.",
+            "actions": ("LOCK_IN", "BREAK_5MIN", "INTENTIONAL", "DISMISS"),
+            "expires_in": 30000,
+            "test": True,
+        }
+        asset = None
+        if stored.asset_id:
+            asset = self.store.get_meme_asset(stored.asset_id)
+        if asset is not None:
+            payload["image_url"] = "/api/meme-assets/{}/image".format(asset.id)
+            payload["meme_asset"] = {"id": asset.id, "filename": asset.filename}
+        probe = Intervention(
+            session_id="test-delivery",
+            mode=InterventionMode.MEME if stored.kind in {"MEME", "CHARACTER", "STICKER"} else InterventionMode.NOTIFICATION,
+            status=InterventionStatus.PLANNED,
+            reason="test delivery (not persisted)",
+            payload=payload,
+            intervention_id="test-{}".format(stored.id),
+        )
+        delivery = self.browser_bridge.publish(probe)
+        receipt: Dict[str, Any] = {
+            "test": True,
+            "persisted": False,
+            "delivery": delivery.to_dict(),
+            "payload": dict(payload),
+            "action": probe.action.to_dict(),
+        }
+        if delivery.status == "NO_EXACT_TARGET":
+            try:
+                fallback = self.notification_handler.send(probe)
+            except (AttributeError, OSError, TypeError, ValueError):
+                fallback = {"delivered": False, "reason": "fallback unavailable"}
+            receipt["toast_fallback"] = fallback
+        return receipt
+
+    # -- V3 response library / feed / break surfaces ---------------------
+
+    def list_responses(self) -> list:
+        """Curated registry entries (seeded idempotently on first use)."""
+        try:
+            self.store.seed_responses()
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        return [item.to_dict() for item in self.store.query_responses()]
+
+    def response_effectiveness(self) -> list:
+        """Recovery-sorted effectiveness table (recovery rate primary)."""
+        try:
+            self.store.seed_responses()
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        return self.store.response_effectiveness()
+
+    def submit_intervention_feedback(self, intervention_id: str,
+                                     feedback_type: str, value: str,
+                                     note: Optional[str] = None,
+                                     source: str = "user") -> dict:
+        """Record an interpretation/usefulness verdict for one intervention."""
+        stored = self.store.get_intervention(str(intervention_id))
+        if stored is None:
+            raise ValueError("intervention not found: {}".format(intervention_id))
+        return self.store.insert_intervention_feedback(
+            stored.id, feedback_type, value, note=note, source=source)
+
+    def intervention_feed(self, limit: int = 50) -> list:
+        """UI-shaped intervention history: delivery + response + outcome."""
+        interventions = self.store.query_interventions(limit=max(1, int(limit)))
+        rows = []
+        for item in interventions:
+            try:
+                actions = self.store.query_intervention_actions(item.id, limit=100)
+            except (AttributeError, OSError, TypeError, ValueError):
+                actions = []
+            action_names = [
+                action.get("action") if isinstance(action, dict)
+                else getattr(action, "action", None)
+                for action in actions
+            ]
+            delivered = any(name in {
+                "sent", "received", "displayed", "seen", "clicked",
+                "lock_in", "desktop_notification"} for name in action_names)
+            interacted = any(name in {
+                "clicked", "lock_in", "break_started", "intentional",
+                "dismissed_as_working", "dismissed"} for name in action_names)
+            try:
+                outcomes = self.store.query_outcomes(intervention_id=item.id, limit=1)
+            except (AttributeError, OSError, TypeError, ValueError):
+                outcomes = []
+            try:
+                feedback = self.store.query_intervention_feedback(item.id, limit=10)
+            except (AttributeError, OSError, TypeError, ValueError):
+                feedback = []
+            payload = dict(getattr(item, "payload", None) or {})
+            rows.append({
+                "id": item.id,
+                "session_id": item.session_id,
+                "mode": item.mode.value if item.mode else None,
+                "status": item.status.value,
+                "reason": item.reason,
+                "created_at": item.created_at.isoformat().replace("+00:00", "Z"),
+                "response_id": payload.get("response_id"),
+                "response_kind": payload.get("response_kind"),
+                "message": payload.get("message"),
+                "intervention_decision": payload.get("intervention_decision"),
+                "meme_asset": payload.get("meme_asset"),
+                "delivered": delivered,
+                "interacted": interacted,
+                "actions": action_names,
+                "outcome": outcomes[0].to_dict() if outcomes else None,
+                "feedback": feedback,
+            })
+        return rows
+
+    def start_break_for(self, intervention_id: str,
+                        minutes: Optional[float] = None) -> dict:
+        """Start an intentional break from an intervention card."""
+        stored = self.store.get_intervention(str(intervention_id))
+        if stored is None:
+            raise ValueError("intervention not found: {}".format(intervention_id))
+        self.record_intervention_action(
+            stored.id, "BREAK_5MIN", state="INTERACTED",
+            target=dict(stored.action.target) if stored.action else {},
+            metadata={"minutes": minutes} if minutes is not None else {},
+        )
+        return self.break_status()
+
+    def _outcome_attribution(self, intervention: Intervention) -> dict:
+        """Join detection/response/delivery/action context for one outcome.
+
+        Pure read assembly (never raises): latest detection for the
+        session, response served, last delivery state, first typed user
+        action, and whether the intervention card itself started a break.
+        """
+        payload = dict(getattr(intervention, "payload", None) or {})
+        session_id = getattr(intervention, "session_id", None)
+        detection_id = None
+        try:
+            detections = self.store.query_detections(session_id=session_id, limit=20)
+            for row in detections:
+                created = getattr(intervention, "created_at", None)
+                stamp = row.get("timestamp") if isinstance(row, dict) else getattr(row, "timestamp", None)
+                if created is None or stamp is None or str(stamp) <= str(
+                        created.isoformat().replace("+00:00", "Z")
+                        if hasattr(created, "isoformat") else created):
+                    detection_id = row.get("detection_id") if isinstance(row, dict) else getattr(
+                        row, "detection_id", None)
+                    break
+        except (AttributeError, OSError, TypeError, ValueError):
+            detection_id = None
+        delivery_state, user_action, break_context = None, None, False
+        try:
+            actions = self.store.query_intervention_actions(intervention.id, limit=100)
+        except (AttributeError, OSError, TypeError, ValueError):
+            actions = []
+        for item in actions:
+            name = str(item.get("action", "")) if isinstance(item, dict) else str(
+                getattr(item, "action", ""))
+            state = item.get("state") if isinstance(item, dict) else getattr(item, "state", None)
+            if name in {"sent", "suppressed", "queued", "no_exact_target",
+                        "desktop_notification"} and delivery_state is None:
+                delivery_state = state or name
+            if name in {"lock_in", "clicked", "break_started", "intentional",
+                        "dismissed_as_working", "dismissed", "ignored",
+                        "auto_dismissed"} and user_action is None:
+                user_action = name
+            if name == "break_started":
+                break_context = True
+        return {
+            "detection_id": detection_id,
+            "response_id": payload.get("response_id"),
+            "delivery_state": delivery_state,
+            "user_action": user_action,
+            "break_context": break_context,
+        }
+
     def measure_outcome(
         self,
         intervention_id: str,
@@ -2651,7 +3705,39 @@ class NoemaService:
         if not sessions:
             sessions = self.store.query_sessions(start=intervention.created_at, limit=100000)
         classifications = self.store.query_classification_map([s.id for s in sessions])
-        outcome = self.outcome_tracker.measure(intervention, sessions, classifications, now, meme_id)
+        attribution = self._outcome_attribution(intervention)
+        outcome = self.outcome_tracker.measure(
+            intervention, sessions, classifications, now, meme_id,
+            detection_id=attribution["detection_id"],
+            response_id=attribution["response_id"],
+            delivery_state=attribution["delivery_state"],
+            user_action=attribution["user_action"],
+            attribution=None,  # decided below, once recovery is known
+            break_context=attribution["break_context"],
+        )
+        # Attribution rule: only one intervention may claim a DIRECT
+        # recovery — the nearest preceding displayed intervention the user
+        # acted on. Recovery without interaction is AMBIENT (never claimed
+        # as intervention success); anything else is NONE. Clicks are
+        # engagement telemetry, never success.
+        from dataclasses import replace as _replace
+
+        user_action = attribution["user_action"]
+        if outcome.recovery_status.value == "RECOVERED":
+            if user_action in {"lock_in", "clicked"}:
+                final_attribution = "direct"
+            elif user_action is None:
+                final_attribution = "ambient"
+            else:
+                final_attribution = "none"
+            outcome = _replace(outcome, attribution=final_attribution)
+            if final_attribution == "direct" and attribution["response_id"]:
+                try:
+                    self.store.record_response_recovered(attribution["response_id"])
+                except (AttributeError, OSError, TypeError, ValueError):
+                    pass
+        else:
+            outcome = _replace(outcome, attribution="none")
         with self._observe_db("outcome_write") as state:
             self.store.insert_outcome(outcome)
             state["rows_affected"] = 1

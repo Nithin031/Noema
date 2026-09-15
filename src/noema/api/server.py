@@ -82,6 +82,28 @@ class NoemaApp:
         )
         return [body]
 
+    def _image_response(self, start_response: Callable, path: str):
+        """Serve one local catalog image without exposing filesystem paths.
+
+        The file must already have been resolved traversal-safe by the
+        service layer; this only maps the extension to a MIME type.
+        """
+        suffix = path.rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
+        content_type = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg", "jpe": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "bmp": "image/bmp",
+        }.get(suffix, "application/octet-stream")
+        body = Path(path).read_bytes()
+        start_response(
+            "200 OK",
+            [("Content-Type", content_type), ("Content-Length", str(len(body))),
+             ("Cache-Control", "public, max-age=86400"),
+             ("Access-Control-Allow-Origin", self._cors_origin()),
+             ("Vary", "Origin")],
+        )
+        return [body]
+
     def _static_response(self, start_response: Callable, filename: str, content_type: str):
         """Serve the bundled local dashboard without exposing filesystem paths."""
         dashboard_dir = Path(__file__).resolve().parent / "dashboard"
@@ -299,6 +321,20 @@ class NoemaApp:
             daily["top_applications"] = applications[:10]
         return daily
 
+    def _safe_classifier_availability(self) -> Dict[str, Any]:
+        """Explicit tier availability; unknown when the classifier is absent."""
+        try:
+            availability = getattr(getattr(self.service, "classifier", None),
+                                   "classification_availability", None)
+            if callable(availability):
+                result = availability()
+                if isinstance(result, dict) and result.get("status"):
+                    return result
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        return {"status": "unknown", "failure_kind": None,
+                "tiers": [], "models": []}
+
     def _classification_status(self) -> Dict[str, Any]:
         """Single scheduler-truth payload for the Command Center.
 
@@ -383,6 +419,7 @@ class NoemaApp:
             "latestClassificationAt": coverage["latest_classification_at"],
             "provider": last_provider,
             "model": last_model,
+            "availability": self._safe_classifier_availability(),
             "quota": quota,
         }
 
@@ -1118,6 +1155,196 @@ class NoemaApp:
                 envelope = SyncEnvelope.from_json(json.dumps(payload))
                 result = self.service.import_sync(envelope)
                 return self._response(start_response, HTTPStatus.OK, result.to_dict())
+
+            if method == "GET" and path in {"/api/responses", "/responses"}:
+                return self._response(
+                    start_response, HTTPStatus.OK,
+                    {"responses": self.service.list_responses()})
+
+            if method == "GET" and path in {"/api/responses/effectiveness",
+                                            "/responses/effectiveness"}:
+                return self._response(
+                    start_response, HTTPStatus.OK,
+                    {"effectiveness": self.service.response_effectiveness()})
+
+            if method == "GET" and path in {"/api/break", "/break"}:
+                return self._response(
+                    start_response, HTTPStatus.OK,
+                    {"break": self.service.break_status()})
+
+            if method == "GET" and path in {"/api/interventions/feed",
+                                            "/interventions/feed"}:
+                return self._response(
+                    start_response, HTTPStatus.OK,
+                    {"interventions": self.service.intervention_feed(
+                        limit=self._int_query(query, "limit", 50))})
+
+            if method == "POST" and path.startswith("/api/interventions/") and path.endswith("/feedback"):
+                intervention_id = path[len("/api/interventions/"):-len("/feedback")]
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict) or not payload.get("feedback_type") or not payload.get("value"):
+                    raise ValueError("feedback_type and value are required")
+                try:
+                    row = self.service.submit_intervention_feedback(
+                        intervention_id, payload["feedback_type"], payload["value"],
+                        note=payload.get("note"),
+                        source=payload.get("source") or "user",
+                    )
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.CREATED, {"feedback": row})
+
+            if method == "POST" and path.startswith("/api/interventions/") and path.endswith("/break"):
+                intervention_id = path[len("/api/interventions/"):-len("/break")]
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body is required")
+                try:
+                    status = self.service.start_break_for(
+                        intervention_id, payload.get("minutes"))
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, {"break": status})
+
+            # -- V3 Phase 10: Meme Center --------------------------------
+            if method == "GET" and path in {"/api/meme-assets", "/meme-assets"}:
+                try:
+                    limit = self._int_query(query, "limit", 60)
+                    offset_raw = query.get("offset", ["0"])[0]
+                    offset = int(offset_raw)
+                except (TypeError, ValueError):
+                    raise ValueError("limit and offset must be numbers")
+                if offset < 0:
+                    raise ValueError("offset cannot be negative")
+                try:
+                    result = self.service.query_meme_assets(
+                        search=query.get("q", query.get("search", [None]))[0],
+                        sentiment=query.get("sentiment", [None])[0],
+                        status=query.get("status", ["all"])[0],
+                        limit=limit, offset=offset)
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, result)
+
+            if method == "GET" and path in {"/api/meme-assets/stats", "/meme-assets/stats"}:
+                return self._response(
+                    start_response, HTTPStatus.OK,
+                    self.service.meme_asset_stats())
+
+            if method == "POST" and path in {"/api/meme-assets/ingest", "/meme-assets/ingest"}:
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict) or not payload.get("csv_path") or not payload.get("images_dir"):
+                    raise ValueError("csv_path and images_dir are required")
+                try:
+                    stats = self.service.ingest_meme_dataset(
+                        payload["csv_path"], payload["images_dir"],
+                        thumbs_dir=payload.get("thumbs_dir"),
+                        make_thumbs=bool(payload.get("make_thumbs", True)))
+                except (OSError, ValueError) as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)[:200]})
+                return self._response(start_response, HTTPStatus.OK, stats)
+
+            if method == "GET" and path.startswith("/api/meme-assets/") and (
+                    path.endswith("/image") or path.endswith("/thumb")):
+                asset_id = path[len("/api/meme-assets/"):]
+                asset_id = asset_id[:-(len("/image") if asset_id.endswith("/image") else len("/thumb"))]
+                resolved = self.service.meme_asset_image_path(
+                    asset_id, thumb=path.endswith("/thumb"))
+                if not resolved:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                try:
+                    return self._image_response(start_response, resolved)
+                except OSError:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+            if method == "GET" and path.startswith("/api/meme-assets/") and path.endswith("/responses"):
+                asset_id = path[len("/api/meme-assets/"):-len("/responses")]
+                asset = self.service.get_meme_asset(asset_id)
+                if asset is None:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return self._response(start_response, HTTPStatus.OK, {
+                    "asset_id": asset_id, "responses": asset["responses"]})
+
+            if method == "GET" and path.startswith("/api/meme-assets/"):
+                asset_id = path[len("/api/meme-assets/"):]
+                if "/" in asset_id or not asset_id:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                asset = self.service.get_meme_asset(asset_id)
+                if asset is None:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return self._response(start_response, HTTPStatus.OK, {"asset": asset})
+
+            if method == "POST" and path.startswith("/api/meme-assets/") and path.endswith("/favorite"):
+                asset_id = path[len("/api/meme-assets/"):-len("/favorite")]
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body is required")
+                try:
+                    asset = self.service.favorite_meme_asset(
+                        asset_id, bool(payload.get("favorite", True)))
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, {"asset": asset})
+
+            if method == "POST" and path.startswith("/api/meme-assets/") and path.endswith("/tags"):
+                asset_id = path[len("/api/meme-assets/"):-len("/tags")]
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict) or "tags" not in payload:
+                    raise ValueError("tags are required")
+                try:
+                    asset = self.service.set_meme_asset_tags(asset_id, payload.get("tags"))
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, {"asset": asset})
+
+            if method == "POST" and path.startswith("/api/meme-assets/") and path.endswith("/enabled"):
+                asset_id = path[len("/api/meme-assets/"):-len("/enabled")]
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body is required")
+                try:
+                    asset = self.service.set_meme_asset_enabled(
+                        asset_id, bool(payload.get("enabled", True)))
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, {"asset": asset})
+
+            if method == "POST" and path in {"/api/responses", "/responses"}:
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body is required")
+                asset_id = payload.get("asset_id")
+                if not asset_id:
+                    raise ValueError("asset_id is required")
+                try:
+                    created = self.service.create_response_from_asset(asset_id, payload)
+                except (TypeError, ValueError) as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)[:200]})
+                return self._response(start_response, HTTPStatus.CREATED, {"response": created})
+
+            if method == "POST" and path.startswith("/api/responses/") and path.endswith("/test"):
+                response_id = path[len("/api/responses/"):-len("/test")]
+                payload = self._json_body(environ) if environ.get("CONTENT_LENGTH") else {}
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body must be an object")
+                try:
+                    receipt = self.service.test_response_delivery(response_id, payload.get("context"))
+                except ValueError as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return self._response(start_response, HTTPStatus.OK, receipt)
+
+            if method == "POST" and path.startswith("/api/responses/"):
+                response_id = path[len("/api/responses/"):]
+                if "/" in response_id or not response_id:
+                    return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                payload = self._json_body(environ)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON body is required")
+                try:
+                    updated = self.service.update_response(response_id, payload)
+                except (TypeError, ValueError) as exc:
+                    return self._response(start_response, HTTPStatus.BAD_REQUEST, {"error": str(exc)[:200]})
+                return self._response(start_response, HTTPStatus.OK, {"response": updated})
 
             return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:

@@ -132,7 +132,17 @@ class DaemonConfig:
     gemini_api_key_env: str = "GEMINI_API_KEY"
     gemini_timeout_seconds: float = 15.0
     # Ranked Gemini fallback models (comma-separated string also accepted).
+    # Legacy alias for the classification tier; prefer
+    # NOEMA_CLASSIFICATION_MODELS for new configuration.
     gemini_models: Any = None
+    # Explicit model tiers (V4). Classification owns meaning; reasoning,
+    # meme, and auxiliary work share the reasoning tier unless pinned.
+    # Each list is validated against its tier — cross-tier substitution
+    # is rejected rather than silently spending the wrong quota.
+    classification_models: Any = None
+    reasoning_models: Any = None
+    meme_models: Any = None
+    auxiliary_models: Any = None
     # OpenRouter primary tier (OpenRouter -> Gemini -> Ollama).
     openrouter_enabled: bool = True
     openrouter_api_key_env: str = "OPENROUTER_API_KEY"
@@ -145,6 +155,11 @@ class DaemonConfig:
     db_path: str = _default_db_path()
     lock_path: Optional[str] = None
     config_path: Optional[str] = None
+    # Meme Center dataset (V3 Phase 10). Empty = unconfigured: asset image
+    # bytes resolve only when a dataset directory is explicitly provided
+    # (CLI flag, env, or JSON config). Nothing here is ever committed.
+    meme_dataset_dir: str = ""
+    meme_thumbs_dir: str = ""
     host: str = "127.0.0.1"
     port: int = 8765
     websocket_port: int = 8766
@@ -200,6 +215,10 @@ class DaemonConfig:
     realtime_enabled: bool = True
     realtime_eval_interval_seconds: float = 60.0
     fast_model_timeout_seconds: float = 20.0
+    # Pinned Gemini model for the realtime reasoning path (V3). Empty means
+    # the first model of the configured gemini_models ranking. The reasoning
+    # path is Gemini-only by product decision; OpenRouter never serves it.
+    fast_gemini_model: Optional[str] = None
     detector_enter_threshold: float = 0.70
     detector_exit_threshold: float = 0.50
     detector_min_active_seconds: float = 120.0
@@ -254,10 +273,59 @@ class DaemonConfig:
         self.gemini_timeout_seconds = _positive(
             "gemini_timeout_seconds", self.gemini_timeout_seconds
         )
-        from noema.infrastructure.providers import ProviderChain
+        from noema.infrastructure.providers import (
+            CLASSIFICATION_MODELS,
+            REASONING_MODELS,
+            TIER_AUXILIARY,
+            TIER_CLASSIFICATION,
+            TIER_REASONING,
+            ProviderChain,
+            assert_tier,
+        )
 
         self.gemini_models = _model_list(
             self.gemini_models, ProviderChain.HOSTED_MODELS, "gemini_models"
+        )
+        # Effective classification ranking: explicit tier list wins, then
+        # the legacy gemini_models alias, then the tier default. Tier
+        # membership is enforced so lower-tier models can never silently
+        # serve classification.
+        if self.classification_models is None:
+            if self.gemini_models != list(ProviderChain.HOSTED_MODELS):
+                self.classification_models = list(self.gemini_models)
+            else:
+                self.classification_models = list(CLASSIFICATION_MODELS)
+        else:
+            self.classification_models = _model_list(
+                self.classification_models, CLASSIFICATION_MODELS,
+                "classification_models")
+        self.classification_models = assert_tier(
+            self.classification_models, TIER_CLASSIFICATION,
+            "classification_models")
+        if self.reasoning_models is None:
+            self.reasoning_models = list(REASONING_MODELS)
+        else:
+            self.reasoning_models = _model_list(
+                self.reasoning_models, REASONING_MODELS, "reasoning_models")
+        self.reasoning_models = assert_tier(
+            self.reasoning_models, TIER_REASONING, "reasoning_models")
+        if self.meme_models is None:
+            self.meme_models = list(self.reasoning_models)
+        else:
+            self.meme_models = _model_list(
+                self.meme_models, REASONING_MODELS, "meme_models")
+        self.meme_models = assert_tier(
+            self.meme_models, TIER_REASONING, "meme_models")
+        if self.auxiliary_models is None:
+            self.auxiliary_models = list(self.reasoning_models)
+        else:
+            self.auxiliary_models = _model_list(
+                self.auxiliary_models, REASONING_MODELS, "auxiliary_models")
+        self.auxiliary_models = assert_tier(
+            self.auxiliary_models, TIER_REASONING, "auxiliary_models")
+        self.fast_gemini_model = (
+            str(self.fast_gemini_model).strip() or None
+            if self.fast_gemini_model is not None else None
         )
         self.openrouter_free_models = _model_list(
             self.openrouter_free_models, ProviderChain.OPENROUTER_MODELS,
@@ -455,6 +523,8 @@ class DaemonConfig:
             "NOEMA_NATIVE_PRESENCE_HEARTBEAT_SECONDS": "native_presence_heartbeat_seconds",
             "NOEMA_DB": "db_path",
             "NOEMA_CONFIG": "config_path",
+            "NOEMA_MEME_DATASET_DIR": "meme_dataset_dir",
+            "NOEMA_MEME_THUMBS_DIR": "meme_thumbs_dir",
             "NOEMA_HOST": "host",
             "NOEMA_PORT": "port",
             "NOEMA_WS_PORT": "websocket_port",
@@ -464,6 +534,7 @@ class DaemonConfig:
             "NOEMA_REALTIME_ENABLED": "realtime_enabled",
             "NOEMA_REALTIME_EVAL_SECONDS": "realtime_eval_interval_seconds",
             "NOEMA_FAST_MODEL_TIMEOUT_SECONDS": "fast_model_timeout_seconds",
+            "NOEMA_FAST_GEMINI_MODEL": "fast_gemini_model",
             "NOEMA_DETECTOR_ENTER": "detector_enter_threshold",
             "NOEMA_DETECTOR_EXIT": "detector_exit_threshold",
             "NOEMA_DETECTOR_MIN_ACTIVE": "detector_min_active_seconds",
@@ -478,6 +549,10 @@ class DaemonConfig:
             "NOEMA_GEMINI_MODEL": "gemini_model",
             "NOEMA_GEMINI_API_KEY_ENV": "gemini_api_key_env",
             "NOEMA_GEMINI_MODELS": "gemini_models",
+            "NOEMA_CLASSIFICATION_MODELS": "classification_models",
+            "NOEMA_REASONING_MODELS": "reasoning_models",
+            "NOEMA_MEME_MODELS": "meme_models",
+            "NOEMA_AUXILIARY_MODELS": "auxiliary_models",
             "NOEMA_OPENROUTER_ENABLED": "openrouter_enabled",
             "NOEMA_OPENROUTER_API_KEY_ENV": "openrouter_api_key_env",
             "OPENROUTER_FREE_MODELS": "openrouter_free_models",
@@ -522,6 +597,10 @@ class DaemonConfig:
             "gemini_api_key_env": self.gemini_api_key_env,
             "gemini_timeout_seconds": self.gemini_timeout_seconds,
             "gemini_models": list(self.gemini_models),
+            "classification_models": list(self.classification_models),
+            "reasoning_models": list(self.reasoning_models),
+            "meme_models": list(self.meme_models),
+            "auxiliary_models": list(self.auxiliary_models),
             "openrouter_enabled": self.openrouter_enabled,
             "openrouter_api_key_env": self.openrouter_api_key_env,
             "openrouter_base_url": self.openrouter_base_url,
@@ -532,6 +611,8 @@ class DaemonConfig:
             "db_path": self.db_path,
             "lock_path": self.lock_path,
             "config_path": self.config_path,
+            "meme_dataset_dir": self.meme_dataset_dir,
+            "meme_thumbs_dir": self.meme_thumbs_dir,
             "host": self.host,
             "port": self.port,
             "websocket_port": self.websocket_port,
@@ -555,6 +636,7 @@ class DaemonConfig:
             "realtime_enabled": self.realtime_enabled,
             "realtime_eval_interval_seconds": self.realtime_eval_interval_seconds,
             "fast_model_timeout_seconds": self.fast_model_timeout_seconds,
+            "fast_gemini_model": self.fast_gemini_model,
             "detector_enter_threshold": self.detector_enter_threshold,
             "detector_exit_threshold": self.detector_exit_threshold,
             "detector_min_active_seconds": self.detector_min_active_seconds,

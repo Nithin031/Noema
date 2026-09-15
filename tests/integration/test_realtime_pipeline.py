@@ -1,8 +1,8 @@
-"""Real-time pipeline integration: sessions → windows → detector → verify.
+"""Real-time pipeline integration: sessions → windows → detector → reason.
 
 Covers the autonomous detector (not the diagnostic fast-check endpoint):
-rolling features feed the candidate detector, fresh candidates verify
-through a fake fast leg, concerning confirmations attempt intervention
+rolling features feed the candidate detector, fresh candidates reason
+through a fake fast leg, confirmed drift attempts intervention
 only on existing actionable behavior evidence, and every meaningful
 decision persists exactly once.
 """
@@ -109,11 +109,14 @@ class ConfirmLeg:
     def complete_json(self, prompt, max_tokens=300):
         self.calls += 1
         return {
-            "concerning": True,
-            "severity": 4,
+            "state": "DISTRACTED",
             "confidence": 0.88,
+            "severity": 4,
+            "evidence_quality": "strong",
             "reason": "sustained drift with repeated switches",
-            "recommended_intervention": "reframe",
+            "intervention_worthwhile": True,
+            "recommended_response_class": "MEME",
+            "evidence_gaps": [],
         }
 
 
@@ -131,7 +134,8 @@ def test_sustained_distraction_runs_the_full_loop():
     result = service.evaluate_realtime(now=NOW, execute_intervention=True)
 
     assert result["state"] == "INTERVENTION_COOLDOWN"
-    assert result["verification"]["concerning"] is True
+    assert result["reasoning"]["state"] == "DISTRACTED"
+    assert result["reasoning"]["intervention_worthwhile"] is True
     assert result["intervention"]["status"] == "EXECUTED"
     assert result["intervention"]["mode"] == "NOTIFICATION"
     decisions = [item["decision"] for item in result["detections"]]

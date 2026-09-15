@@ -35,6 +35,14 @@ class InterventionOutcome:
     intervention_type: Optional[str] = None
     meme_id: Optional[str] = None
     outcome_id: Optional[str] = None
+    # V3 attribution linkage. All optional: pre-V3 rows and unattributed
+    # recoveries leave them empty rather than fabricated.
+    detection_id: Optional[str] = None
+    response_id: Optional[str] = None
+    delivery_state: Optional[str] = None
+    user_action: Optional[str] = None
+    attribution: Optional[str] = None
+    break_context: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "intervention_id", str(self.intervention_id))
@@ -44,6 +52,14 @@ class InterventionOutcome:
             object.__setattr__(self, "recovery_time", coerce_timestamp(self.recovery_time))
         if self.recovery_duration_seconds is not None:
             object.__setattr__(self, "recovery_duration_seconds", float(self.recovery_duration_seconds))
+        for field_name in ("detection_id", "response_id", "delivery_state",
+                           "user_action", "attribution"):
+            value = getattr(self, field_name)
+            object.__setattr__(self, field_name, str(value).strip() if value else None)
+        if self.attribution is not None and self.attribution not in {
+                "direct", "ambient", "none"}:
+            raise ValueError("attribution must be direct, ambient, or none")
+        object.__setattr__(self, "break_context", bool(self.break_context))
 
     @property
     def id(self) -> str:
@@ -60,6 +76,12 @@ class InterventionOutcome:
             "recovery_duration_seconds": self.recovery_duration_seconds,
             "intervention_type": self.intervention_type,
             "meme_id": self.meme_id,
+            "detection_id": self.detection_id,
+            "response_id": self.response_id,
+            "delivery_state": self.delivery_state,
+            "user_action": self.user_action,
+            "attribution": self.attribution,
+            "break_context": self.break_context,
         }
 
 
@@ -79,6 +101,12 @@ class OutcomeTracker:
         classifications: Optional[Mapping[str, Classification]] = None,
         now: Optional[datetime] = None,
         meme_id: Optional[str] = None,
+        detection_id: Optional[str] = None,
+        response_id: Optional[str] = None,
+        delivery_state: Optional[str] = None,
+        user_action: Optional[str] = None,
+        attribution: Optional[str] = None,
+        break_context: bool = False,
     ) -> InterventionOutcome:
         classifications = classifications or {}
 
@@ -126,4 +154,10 @@ class OutcomeTracker:
             recovery_duration_seconds=recovery_duration,
             intervention_type=intervention.mode.value if intervention.mode else None,
             meme_id=meme_id,
+            detection_id=detection_id,
+            response_id=response_id,
+            delivery_state=delivery_state,
+            user_action=user_action,
+            attribution=attribution,
+            break_context=break_context,
         )

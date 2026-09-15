@@ -22,7 +22,7 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - very old interpreters
     ZoneInfo = None  # type: ignore[assignment]
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -139,6 +139,108 @@ ESCALATION_MIN_DURATION_SECONDS = 120.0
 # product calendar day instead. Both are reported explicitly so the two are
 # never silently mixed.
 PROVIDER_QUOTA_RESET_TZ = "America/Los_Angeles"
+
+
+# Model tiers (V4 semantic routing). Classification owns meaning;
+# everything else (reasoning, meme selection, copy, auxiliary) owns
+# judgment about meaning. The tiers never overlap: a classification-tier
+# model is never spent on non-classification work and vice versa, so
+# quota on the scarce high-capability tier cannot leak into chatty work.
+TIER_CLASSIFICATION = "classification"
+TIER_REASONING = "reasoning"
+TIER_AUXILIARY = "auxiliary"
+
+CLASSIFICATION_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+)
+
+REASONING_MODELS = (
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+)
+
+MODELS_FOR_TIER = {
+    TIER_CLASSIFICATION: CLASSIFICATION_MODELS,
+    TIER_REASONING: REASONING_MODELS,
+    # Auxiliary work (meme selection, copy, one-off helpers) shares the
+    # reasoning tier unless the operator pins dedicated lists.
+    TIER_AUXILIARY: REASONING_MODELS,
+}
+
+
+def tier_for_model(model: Any) -> Optional[str]:
+    """Return the tier a model belongs to, or None when unknown."""
+    name = str(model or "").strip()
+    if name in CLASSIFICATION_MODELS:
+        return TIER_CLASSIFICATION
+    if name in REASONING_MODELS:
+        return TIER_REASONING
+    return None
+
+
+def models_for_tier(tier: Any) -> Tuple[str, ...]:
+    """Return the canonical model ranking for a tier (empty when unknown)."""
+    return tuple(MODELS_FOR_TIER.get(str(tier or "").strip().lower(), ()))
+
+
+def assert_tier(models: Iterable[str], tier: str, name: str) -> List[str]:
+    """Validate a configured model list against its tier.
+
+    Returns the cleaned list. Raises ValueError when a model belongs to a
+    different tier (cross-tier substitution would silently spend the wrong
+    quota and blur the architecture) or is entirely unknown.
+    """
+    wanted = MODELS_FOR_TIER.get(str(tier or "").strip().lower())
+    if wanted is None:
+        raise ValueError("unknown model tier: {}".format(tier))
+    cleaned = [str(item).strip() for item in (models or []) if str(item).strip()]
+    if not cleaned:
+        raise ValueError("{} must name at least one model".format(name))
+    for model in cleaned:
+        actual = tier_for_model(model)
+        if actual is None:
+            raise ValueError("{} names unknown model: {}".format(name, model))
+        if actual != str(tier).strip().lower():
+            raise ValueError(
+                "{} names {} which belongs to tier '{}', not '{}'".format(
+                    name, model, actual, tier))
+    return cleaned
+
+
+class FailureKind:
+    """Explicit model-failure states. Never semantic verdicts."""
+
+    SUCCESS = "SUCCESS"
+    RATE_LIMITED = "RATE_LIMITED"
+    TIMEOUT = "TIMEOUT"
+    INVALID_OUTPUT = "INVALID_OUTPUT"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+    UNAVAILABLE = "UNAVAILABLE"
+
+    ALL = frozenset({
+        SUCCESS, RATE_LIMITED, TIMEOUT, INVALID_OUTPUT, PROVIDER_ERROR,
+        UNAVAILABLE,
+    })
+
+
+def classify_failure(error: BaseException) -> str:
+    """Map a provider exception onto an explicit FailureKind.
+
+    Timeouts and rate limits stay distinguishable from generic provider
+    errors so quota handling never mistakes one for the other — and none
+    of them ever becomes a semantic result.
+    """
+    if _looks_like_rate_limited(error):
+        return FailureKind.RATE_LIMITED
+    text = str(error).casefold()
+    if isinstance(error, TimeoutError) or any(token in text for token in (
+            "timed out", "timeout", "deadline exceeded", "timedout")):
+        return FailureKind.TIMEOUT
+    return FailureKind.PROVIDER_ERROR
 
 
 def openrouter_registry() -> List[Dict[str, Any]]:
@@ -1174,6 +1276,7 @@ class ProviderChain:
         self.observer = observer
         self.last_provider = None
         self.last_model = None
+        self.last_failure_kind: Optional[str] = None
         self.attempts = []
         self.model_latency_ms: Dict[str, float] = {}
         # Packing diagnostics for the latest classify_batch call, one entry
@@ -1626,6 +1729,7 @@ class ProviderChain:
                 self.ledger.consume("llm", provider.model, billable)
             self.last_provider = provider.name
             self.last_model = provider.model
+            self.last_failure_kind = None
             self.last_batch_size += len(matched)
             for session_id, item in matched.items():
                 self.last_batch[session_id] = (provider.name, provider.model)
@@ -1789,6 +1893,7 @@ class ProviderChain:
                 self.ledger.consume("llm", provider.model, billable)
             self.last_provider = provider.name
             self.last_model = provider.model
+            self.last_failure_kind = None
             stamp_iso, stamp_ms = self._now_pair()
             self._emit_invocation(
                 request_id=tele["request_id"], timestamp_iso=stamp_iso,
@@ -1814,6 +1919,16 @@ class ProviderChain:
         final_error = previous[1] if previous else ProviderError(
             "all hosted models and Ollama fallback failed" if self.include_ollama
             else "all hosted Gemini models failed (Gemini-only mode)")
+        if isinstance(final_error, BaseException) and not isinstance(
+                final_error, ProviderError):
+            final_failure_kind = classify_failure(final_error)
+        elif "invalid classification schema" in str(final_error):
+            # Every leg answered, but nothing parsed: an output failure,
+            # not a transport failure. Still never a semantic result.
+            final_failure_kind = FailureKind.INVALID_OUTPUT
+        else:
+            final_failure_kind = classify_failure(final_error)
+        self.last_failure_kind = final_failure_kind
         self._emit_invocation(
             request_id=tele["request_id"], timestamp_iso=stamp_iso,
             timestamp_ms=stamp_ms, provider_name="chain",
@@ -1881,6 +1996,29 @@ class ProviderChain:
             and bool(payload.get("signal", "").strip())
         )
 
+    def availability(self) -> Dict[str, Any]:
+        """Explicit chain availability state (never a semantic verdict).
+
+        ``classification_unavailable`` means the last terminal attempt
+        exhausted the tier — callers must surface it as-is and must never
+        convert it into a neutral classification. ``available`` means no
+        terminal failure is recorded (it does not promise the next call
+        succeeds); ``unknown`` covers non-chain providers.
+        """
+        tiers = sorted({tier_for_model(getattr(provider, "model", None))
+                        for provider in self._chain()} - {None})
+        if self.last_failure_kind is None:
+            status = "available"
+        else:
+            status = "classification_unavailable"
+        return {
+            "status": status,
+            "failure_kind": self.last_failure_kind,
+            "tiers": tiers,
+            "models": [str(getattr(provider, "model", None))
+                       for provider in self._chain()],
+        }
+
     def telemetry(self) -> Dict[str, Any]:
         return {
             "provider_chain": [
@@ -1889,6 +2027,7 @@ class ProviderChain:
             ],
             "last_provider": self.last_provider,
             "last_model": self.last_model,
+            "last_failure_kind": self.last_failure_kind,
             "attempts": list(self.attempts),
             "rate_limits": {
                 model: state.__dict__.copy() for model, state in self.rate_limits.items()
@@ -1899,7 +2038,9 @@ class ProviderChain:
 
 
 __all__ = [
+    "CLASSIFICATION_MODELS",
     "FAST_DISTRACTION_MODEL",
+    "FailureKind",
     "GeminiProvider",
     "ProviderChain",
     "ModelProvider",
@@ -1907,5 +2048,13 @@ __all__ = [
     "OpenRouterProvider",
     "OPENROUTER_MODEL_REGISTRY",
     "ProviderError",
+    "REASONING_MODELS",
+    "TIER_AUXILIARY",
+    "TIER_CLASSIFICATION",
+    "TIER_REASONING",
+    "assert_tier",
+    "classify_failure",
+    "models_for_tier",
     "openrouter_registry",
+    "tier_for_model",
 ]

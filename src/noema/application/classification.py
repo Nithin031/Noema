@@ -1209,6 +1209,24 @@ class Classifier:
         )
         return [results[session.id] for session in original]
 
+    def classification_availability(self) -> Dict[str, Any]:
+        """Explicit availability of the classification tier.
+
+        ``classification_unavailable`` means the last terminal attempt
+        exhausted every tier model. It is a routing state for operators
+        and UI — never a semantic verdict, never a substitute category.
+        Sessions keep their honest pending/failed rows regardless.
+        """
+        provider = getattr(self, "provider", None)
+        availability = getattr(provider, "availability", None)
+        if callable(availability):
+            try:
+                return dict(availability())
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
+        return {"status": "unknown", "failure_kind": None,
+                "tiers": [], "models": []}
+
     def last_job_telemetry(self) -> Optional[Dict[str, Any]]:
         with self._job_lock:
             return self._job_history[-1].to_dict() if self._job_history else None

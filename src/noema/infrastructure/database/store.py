@@ -16,6 +16,7 @@ from noema.domain.intervention import Intervention, InterventionMode, Interventi
 from noema.domain.meme import MemePayload
 from noema.domain.memory import Memory, MemoryKind, PersonalizationProfile
 from noema.domain.outcomes import InterventionOutcome, RecoveryStatus
+from noema.domain.response import Response
 from noema.domain.meaningful import MeaningfulSession, MeaningfulSessionOutcome, MeaningfulSessionStatus, SessionPhase
 from noema.domain.intent import AlignmentResult, Intent
 from noema.domain.sessions.models import ActivitySession
@@ -184,6 +185,32 @@ CREATE TABLE IF NOT EXISTS memes (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memes_session_id ON memes(session_id);
+-- V3 Phase 10 Meme Center asset catalog. Metadata + provenance only;
+-- image bytes always stay on the local filesystem (dataset dir / thumbs
+-- dir) and are never committed to the repository. Sentiment is verbatim
+-- dataset metadata, never an intervention-suitability verdict.
+CREATE TABLE IF NOT EXISTS meme_assets (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    ocr_text TEXT,
+    corrected_text TEXT,
+    sentiment TEXT,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    favorite INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    width INTEGER,
+    height INTEGER,
+    byte_size INTEGER,
+    image_format TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, source_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_meme_assets_filename ON meme_assets(filename);
+CREATE INDEX IF NOT EXISTS idx_meme_assets_sentiment ON meme_assets(sentiment);
+CREATE INDEX IF NOT EXISTS idx_meme_assets_favorite ON meme_assets(favorite);
+CREATE INDEX IF NOT EXISTS idx_meme_assets_enabled ON meme_assets(enabled);
 CREATE TABLE IF NOT EXISTS intervention_outcomes (
     id TEXT PRIMARY KEY,
     intervention_id TEXT NOT NULL UNIQUE,
@@ -193,9 +220,51 @@ CREATE TABLE IF NOT EXISTS intervention_outcomes (
     recovery_session_id TEXT,
     recovery_duration_seconds REAL,
     intervention_type TEXT,
-    meme_id TEXT
+    meme_id TEXT,
+    detection_id TEXT,
+    response_id TEXT,
+    delivery_state TEXT,
+    user_action TEXT,
+    attribution TEXT,
+    break_context INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_outcomes_status ON intervention_outcomes(recovery_status);
+-- V3 curated response library. Seed rows ship in domain/response/seeds.py
+-- and are inserted idempotently on first use. Counters are maintained by
+-- the outcome worker, never by UI code, so effectiveness analysis reads
+-- recovery — not clicks.
+CREATE TABLE IF NOT EXISTS responses (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    tone TEXT NOT NULL DEFAULT 'gentle',
+    title TEXT NOT NULL DEFAULT 'Noema',
+    body_template TEXT NOT NULL DEFAULT '',
+    asset_id TEXT,
+    severity_min INTEGER NOT NULL DEFAULT 1,
+    severity_max INTEGER NOT NULL DEFAULT 5,
+    context_tags_json TEXT NOT NULL DEFAULT '[]',
+    cooldown_seconds REAL NOT NULL DEFAULT 3600,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    times_shown INTEGER NOT NULL DEFAULT 0,
+    times_clicked INTEGER NOT NULL DEFAULT 0,
+    recovery_count INTEGER NOT NULL DEFAULT 0,
+    last_shown_at TEXT
+);
+-- V3 intervention/response feedback, kept separate from
+-- classification_feedback by design: interpretation correctness and
+-- response usefulness are different questions from label correctness.
+CREATE TABLE IF NOT EXISTS intervention_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    intervention_id TEXT NOT NULL,
+    feedback_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    note TEXT,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(intervention_id, feedback_type, source)
+);
+CREATE INDEX IF NOT EXISTS idx_intervention_feedback_intervention
+    ON intervention_feedback(intervention_id);
 CREATE TABLE IF NOT EXISTS distraction_detections (
     detection_id TEXT PRIMARY KEY,
     timestamp TEXT NOT NULL,
@@ -215,7 +284,11 @@ CREATE TABLE IF NOT EXISTS distraction_detections (
     model TEXT,
     latency_ms REAL,
     decision TEXT NOT NULL,
-    reason TEXT NOT NULL
+    reason TEXT NOT NULL,
+    reasoning_json TEXT NOT NULL DEFAULT '{}',
+    reasoning_version TEXT,
+    response_class TEXT,
+    intervention_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_detections_timestamp ON distraction_detections(timestamp);
 CREATE TABLE IF NOT EXISTS memories (
@@ -475,6 +548,28 @@ class SQLiteStore:
                 "relation": "TEXT NOT NULL DEFAULT 'unknown'",
                 "goal_relevance": "TEXT NOT NULL DEFAULT 'unknown'",
                 "alignment_confidence": "REAL",
+            },
+            "distraction_detections": {
+                # V3 reasoning persistence. Pre-V3 rows keep the defaults:
+                # no stored rationale, no reasoning version, no response
+                # class. Efficacy joins filter on non-null response_class.
+                "reasoning_json": "TEXT NOT NULL DEFAULT '{}'",
+                "reasoning_version": "TEXT",
+                "response_class": "TEXT",
+                # V4 intervention-decision persistence. Older rows keep the
+                # default: readers treat a missing/empty decision as none.
+                "intervention_json": "TEXT NOT NULL DEFAULT '{}'",
+            },
+            "intervention_outcomes": {
+                # V3 outcome attribution. Pre-V3 rows keep NULL/0: they are
+                # valid recovery history but excluded from response-efficacy
+                # joins (which require a non-null response_id).
+                "detection_id": "TEXT",
+                "response_id": "TEXT",
+                "delivery_state": "TEXT",
+                "user_action": "TEXT",
+                "attribution": "TEXT",
+                "break_context": "INTEGER NOT NULL DEFAULT 0",
             },
         }
         for table, columns in migrations.items():
@@ -805,6 +900,14 @@ class SQLiteStore:
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
                 """,
                 (str(key), str(value)),
+            )
+
+    def delete_state(self, key: str) -> None:
+        """Remove a durable runtime cursor or checkpoint (idempotent)."""
+
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM daemon_state WHERE key = ?", (str(key),)
             )
 
     def insert_session(self, session: ActivitySession) -> bool:
@@ -1580,6 +1683,11 @@ class SQLiteStore:
             "AUTO_DISMISSED": "auto_dismissed",
             "IGNORED": "ignored",
             "RECOVERED": "recovered",
+            "BREAK_STARTED": "break_started",
+            "BREAK_5MIN": "break_started",
+            "BREAK_ENDED": "break_ended",
+            "INTENTIONAL": "intentional",
+            "RESPONSE_SELECTED": "response_selected",
             "SENT": "sent",
             "DESKTOP_NOTIFICATION": "desktop_notification",
             "SUPPRESSED": "suppressed",
@@ -1667,6 +1775,26 @@ class SQLiteStore:
             for row in rows
         ]
 
+    def get_intervention(self, intervention_id: str) -> Optional[Intervention]:
+        """Fetch one intervention by id (for action/outcome linkage)."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM interventions WHERE id = ?",
+                (str(intervention_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return Intervention(
+            session_id=row["session_id"],
+            mode=InterventionMode(row["mode"]) if row["mode"] else None,
+            status=InterventionStatus(row["status"]),
+            reason=row["reason"],
+            payload=json.loads(row["payload_json"] or "{}"),
+            created_at=row["created_at"],
+            executed_at=row["executed_at"] if row["executed_at"] else None,
+            intervention_id=row["id"],
+        )
+
     def insert_meme(self, meme: MemePayload) -> bool:
         if not isinstance(meme, MemePayload):
             raise TypeError("SQLiteStore expects MemePayload instances")
@@ -1706,6 +1834,475 @@ class SQLiteStore:
             for row in rows
         ]
 
+    # -- V3 Phase 10: meme asset catalog -------------------------------
+
+    def upsert_meme_asset(self, asset: "MemeAsset") -> bool:
+        """Insert a catalog asset, or refresh its dataset-derived fields.
+
+        User curation (favorite/tags/enabled) is never overwritten by
+        re-ingestion: only source metadata columns are updated on conflict.
+        Returns True only when a new row was inserted (drives idempotent
+        ingestion statistics).
+        """
+        from noema.domain.meme import MemeAsset
+
+        if not isinstance(asset, MemeAsset):
+            raise TypeError("SQLiteStore expects MemeAsset instances")
+        import json as _json
+
+        values = (
+            asset.id, asset.source, asset.source_ref, asset.filename,
+            asset.ocr_text, asset.corrected_text, asset.sentiment,
+            _json.dumps(list(asset.tags), ensure_ascii=False, sort_keys=True),
+            1 if asset.favorite else 0, 1 if asset.enabled else 0,
+            asset.width, asset.height, asset.byte_size, asset.image_format,
+            asset.created_at.isoformat().replace("+00:00", "Z") if asset.created_at else None,
+        )
+        with self._lock:
+            existed = self._connection.execute(
+                "SELECT 1 FROM meme_assets WHERE id = ?", (asset.id,)
+            ).fetchone() is not None
+            if existed:
+                self._connection.execute(
+                    """
+                    UPDATE meme_assets SET source = ?, source_ref = ?,
+                        filename = ?, ocr_text = ?, corrected_text = ?,
+                        sentiment = ?, width = ?, height = ?,
+                        byte_size = ?, image_format = ?
+                    WHERE id = ?
+                    """,
+                    values[1:7] + values[10:14] + (asset.id,),
+                )
+                return False
+            self._connection.execute(
+                """
+                INSERT INTO meme_assets
+                (id, source, source_ref, filename, ocr_text, corrected_text,
+                 sentiment, tags_json, favorite, enabled, width, height,
+                 byte_size, image_format, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            return True
+
+    def get_meme_asset(self, asset_id: str) -> Optional["MemeAsset"]:
+        from noema.domain.meme import MemeAsset
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM meme_assets WHERE id = ?", (str(asset_id),)
+            ).fetchone()
+        return MemeAsset.from_row(dict(row)) if row else None
+
+    def query_meme_assets(
+        self,
+        search: Optional[str] = None,
+        sentiment: Optional[str] = None,
+        status: str = "all",
+        limit: int = 60,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Paged asset catalog query for the Meme Center.
+
+        ``search`` matches OCR, corrected OCR, filename, and tags (LIKE,
+        case-insensitive). ``sentiment`` is an exact dataset label.
+        ``status`` is one of all/favorite/curated/not_curated/disabled.
+        Returns ``{"items": [...], "total": n}`` with per-item
+        ``response_count`` so the UI can separate assets from responses.
+        """
+        from noema.domain.meme import MemeAsset
+
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        if offset < 0:
+            raise ValueError("offset cannot be negative")
+        clauses: List[str] = []
+        parameters: List[Any] = []
+        term = str(search or "").strip()
+        if term:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = "%{}%".format(escaped)
+            clauses.append(
+                "(ocr_text LIKE ? ESCAPE '\\' OR corrected_text LIKE ? ESCAPE '\\'"
+                " OR filename LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\')"
+            )
+            parameters.extend([like, like, like, like])
+        label = str(sentiment or "").strip().lower()
+        if label:
+            clauses.append("sentiment = ?")
+            parameters.append(label)
+        mode = str(status or "all").strip().lower()
+        if mode == "favorite":
+            clauses.append("favorite = 1")
+        elif mode == "disabled":
+            clauses.append("enabled = 0")
+        elif mode == "curated":
+            clauses.append(
+                "EXISTS (SELECT 1 FROM responses WHERE responses.asset_id = meme_assets.id)")
+        elif mode == "not_curated":
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM responses WHERE responses.asset_id = meme_assets.id)")
+        elif mode != "all":
+            raise ValueError("unknown asset status: {}".format(status))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._lock:
+            total = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM meme_assets{}".format(where), parameters
+            ).fetchone()["n"]
+            rows = self._connection.execute(
+                "SELECT * FROM meme_assets{} ORDER BY filename LIMIT ? OFFSET ?".format(where),
+                parameters + [limit, offset],
+            ).fetchall()
+            counts = {
+                row["asset_id"]: row["n"]
+                for row in self._connection.execute(
+                    "SELECT asset_id, COUNT(*) AS n FROM responses "
+                    "WHERE asset_id IS NOT NULL GROUP BY asset_id"
+                ).fetchall()
+            }
+        items = [
+            MemeAsset.from_row(dict(row)).to_dict(
+                response_count=int(counts.get(dict(row)["id"], 0)))
+            for row in rows
+        ]
+        return {"items": items, "total": int(total)}
+
+    def set_asset_favorite(self, asset_id: str, favorite: bool = True) -> bool:
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE meme_assets SET favorite = ? WHERE id = ?",
+                (1 if favorite else 0, str(asset_id)),
+            )
+        return cursor.rowcount == 1
+
+    def set_asset_enabled(self, asset_id: str, enabled: bool = True) -> bool:
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE meme_assets SET enabled = ? WHERE id = ?",
+                (1 if enabled else 0, str(asset_id)),
+            )
+        return cursor.rowcount == 1
+
+    def set_asset_tags(self, asset_id: str, tags: Iterable[str]) -> bool:
+        import json as _json
+
+        cleaned = tuple(dict.fromkeys(
+            str(tag).strip().lower() for tag in (tags or ()) if str(tag).strip()))
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE meme_assets SET tags_json = ? WHERE id = ?",
+                (_json.dumps(list(cleaned), ensure_ascii=False, sort_keys=True),
+                 str(asset_id)),
+            )
+        return cursor.rowcount == 1
+
+    def asset_responses(self, asset_id: str) -> List[Response]:
+        """Responses backed by one asset (asset → many responses)."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM responses WHERE asset_id = ? ORDER BY id",
+                (str(asset_id),),
+            ).fetchall()
+        return [Response.from_row(dict(row)) for row in rows]
+
+    def meme_asset_stats(self) -> Dict[str, Any]:
+        """Corpus totals for the Meme Center header (no image bytes)."""
+        with self._lock:
+            total = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM meme_assets").fetchone()["n"]
+            favorites = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM meme_assets WHERE favorite = 1").fetchone()["n"]
+            by_sentiment = {
+                row["sentiment"] if row["sentiment"] else "unknown": int(row["n"])
+                for row in self._connection.execute(
+                    "SELECT sentiment, COUNT(*) AS n FROM meme_assets GROUP BY sentiment"
+                ).fetchall()
+            }
+            curated = self._connection.execute(
+                "SELECT COUNT(DISTINCT asset_id) AS n FROM responses "
+                "WHERE asset_id IS NOT NULL").fetchone()["n"]
+            active = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM responses WHERE enabled = 1").fetchone()["n"]
+        return {
+            "assets": int(total),
+            "favorites": int(favorites),
+            "by_sentiment": by_sentiment,
+            "curated_assets": int(curated),
+            "active_responses": int(active),
+        }
+
+    def insert_response(self, response: Response) -> bool:
+        """Insert or replace one curated response registry entry."""
+        if not isinstance(response, Response):
+            raise TypeError("SQLiteStore expects Response instances")
+        import json as _json
+
+        values = (
+            response.id, response.kind, response.tone, response.title,
+            response.body_template, response.asset_id,
+            response.severity_min, response.severity_max,
+            _json.dumps(list(response.context_tags), ensure_ascii=False, sort_keys=True),
+            float(response.cooldown_seconds), 1 if response.enabled else 0,
+            response.times_shown, response.times_clicked, response.recovery_count,
+            response.last_shown_at,
+        )
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO responses
+                (id, kind, tone, title, body_template, asset_id,
+                 severity_min, severity_max, context_tags_json,
+                 cooldown_seconds, enabled, times_shown, times_clicked,
+                 recovery_count, last_shown_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    kind = excluded.kind,
+                    tone = excluded.tone,
+                    title = excluded.title,
+                    body_template = excluded.body_template,
+                    asset_id = excluded.asset_id,
+                    severity_min = excluded.severity_min,
+                    severity_max = excluded.severity_max,
+                    context_tags_json = excluded.context_tags_json,
+                    cooldown_seconds = excluded.cooldown_seconds,
+                    enabled = excluded.enabled
+                """,
+                values,
+            )
+        return cursor.rowcount >= 0
+
+    def seed_responses(self) -> int:
+        """Insert built-in curated responses idempotently. Returns row count."""
+        from noema.domain.response import seed_responses
+
+        count = 0
+        for row in seed_responses():
+            response = Response(
+                id=row["id"], kind=row["kind"], tone=row.get("tone", "gentle"),
+                title=row.get("title", "Noema"),
+                body_template=row.get("body_template", ""),
+                asset_id=row.get("asset_id"),
+                severity_min=row.get("severity_min", 1),
+                severity_max=row.get("severity_max", 5),
+                context_tags=tuple(row.get("context_tags", ())),
+                cooldown_seconds=row.get("cooldown_seconds", 3600.0),
+                enabled=row.get("enabled", True),
+            )
+            with self._lock:
+                existing = self._connection.execute(
+                    "SELECT times_shown, times_clicked, recovery_count, last_shown_at, enabled FROM responses WHERE id = ?",
+                    (response.id,),
+                ).fetchone()
+            if existing is None:
+                self.insert_response(response)
+                count += 1
+        return count
+
+    def query_responses(self, enabled_only: bool = True,
+                        kind: Optional[str] = None) -> List[Response]:
+        """Return registry entries (counters included) for the selector."""
+        clauses, parameters = [], []
+        if enabled_only:
+            clauses.append("enabled = 1")
+        if kind:
+            clauses.append("kind = ?")
+            parameters.append(str(kind).strip().upper())
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM responses{} ORDER BY id".format(where),
+                parameters,
+            ).fetchall()
+        return [Response.from_row(dict(row)) for row in rows]
+
+    def get_response(self, response_id: str) -> Optional[Response]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM responses WHERE id = ?", (str(response_id),)
+            ).fetchone()
+        return Response.from_row(dict(row)) if row else None
+
+    def update_response(self, response_id: str, fields: Dict[str, Any]) -> Optional[Response]:
+        """Edit a curated response (Meme Center editor). Validated via model.
+
+        Only editable columns may change; counters are never writable here.
+        Returns the updated Response, or None when the id is unknown.
+        """
+        current = self.get_response(response_id)
+        if current is None:
+            return None
+        editable = {"kind", "tone", "title", "body_template", "asset_id",
+                    "severity_min", "severity_max", "context_tags",
+                    "cooldown_seconds", "enabled"}
+        unknown = set(fields or {}) - editable
+        if unknown:
+            raise ValueError("unknown response fields: {}".format(sorted(unknown)))
+        merged = current.to_dict()
+        merged.pop("recovery_rate", None)
+        merged.pop("last_shown_at", None)
+        for key, value in dict(fields or {}).items():
+            merged[key] = value() if callable(value) else value
+        if "context_tags" in merged and isinstance(merged["context_tags"], str):
+            import json as _json
+
+            try:
+                merged["context_tags"] = _json.loads(merged["context_tags"])
+            except (TypeError, ValueError):
+                merged["context_tags"] = [merged["context_tags"]]
+        updated = Response(
+            id=current.id,
+            kind=merged.get("kind", current.kind),
+            tone=merged.get("tone", current.tone),
+            title=merged.get("title", current.title),
+            body_template=merged.get("body_template", current.body_template),
+            asset_id=merged.get("asset_id", current.asset_id),
+            severity_min=merged.get("severity_min", current.severity_min),
+            severity_max=merged.get("severity_max", current.severity_max),
+            context_tags=tuple(merged.get("context_tags", current.context_tags)),
+            cooldown_seconds=merged.get("cooldown_seconds", current.cooldown_seconds),
+            enabled=merged.get("enabled", current.enabled),
+            times_shown=current.times_shown,
+            times_clicked=current.times_clicked,
+            recovery_count=current.recovery_count,
+            last_shown_at=current.last_shown_at,
+        )
+        import json as _json
+
+        with self._lock:
+            self._connection.execute(
+                """
+                UPDATE responses SET kind = ?, tone = ?, title = ?,
+                    body_template = ?, asset_id = ?, severity_min = ?,
+                    severity_max = ?, context_tags_json = ?,
+                    cooldown_seconds = ?, enabled = ?
+                WHERE id = ?
+                """,
+                (updated.kind, updated.tone, updated.title,
+                 updated.body_template, updated.asset_id,
+                 updated.severity_min, updated.severity_max,
+                 _json.dumps(list(updated.context_tags), ensure_ascii=False, sort_keys=True),
+                 float(updated.cooldown_seconds), 1 if updated.enabled else 0,
+                 current.id),
+            )
+        return self.get_response(current.id)
+
+    def record_response_shown(self, response_id: str, at: Optional[Any] = None) -> None:
+        """Increment times_shown + stamp last_shown_at (delivery path only)."""
+        stamp = coerce_timestamp(at) if at is not None else datetime.now(timezone.utc)
+        with self._lock:
+            self._connection.execute(
+                """UPDATE responses SET times_shown = times_shown + 1,
+                   last_shown_at = ? WHERE id = ?""",
+                (stamp.isoformat().replace("+00:00", "Z"), str(response_id)),
+            )
+
+    def record_response_clicked(self, response_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "UPDATE responses SET times_clicked = times_clicked + 1 WHERE id = ?",
+                (str(response_id),),
+            )
+
+    def record_response_recovered(self, response_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "UPDATE responses SET recovery_count = recovery_count + 1 WHERE id = ?",
+                (str(response_id),),
+            )
+
+    def response_effectiveness(self) -> List[Dict[str, Any]]:
+        """Recovery-sorted effectiveness table (recovery rate primary)."""
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT id, kind, tone, times_shown, times_clicked,
+                   recovery_count FROM responses ORDER BY id"""
+            ).fetchall()
+        table = []
+        for row in rows:
+            shown = int(row["times_shown"] or 0)
+            recovered = int(row["recovery_count"] or 0)
+            table.append({
+                "id": row["id"],
+                "kind": row["kind"],
+                "tone": row["tone"],
+                "times_shown": shown,
+                "times_clicked": int(row["times_clicked"] or 0),
+                "recovery_count": recovered,
+                "recovery_rate": round(recovered / shown, 3) if shown > 0 else None,
+            })
+        table.sort(key=lambda item: (
+            item["recovery_rate"] is None, -(item["recovery_rate"] or 0.0),
+            -item["times_shown"], item["id"]))
+        return table
+
+    FEEDBACK_TYPES = ("INTERPRETATION", "USEFULNESS")
+    INTERPRETATION_VALUES = ("CORRECT", "WRONG")
+    USEFULNESS_VALUES = ("HELPFUL", "UNHELPFUL")
+
+    def insert_intervention_feedback(
+        self,
+        intervention_id: str,
+        feedback_type: str,
+        value: str,
+        note: Optional[str] = None,
+        source: str = "user",
+    ) -> Dict[str, Any]:
+        """Record (or re-record) an intervention/response verdict.
+
+        Kept separate from classification_feedback by design: interpretation
+        correctness and response usefulness are different questions from
+        label correctness, and are analyzed separately.
+        """
+        feedback_type = str(feedback_type or "").strip().upper()
+        if feedback_type not in self.FEEDBACK_TYPES:
+            raise ValueError("feedback_type must be one of {}".format(list(self.FEEDBACK_TYPES)))
+        value = str(value or "").strip().upper()
+        allowed = (self.INTERPRETATION_VALUES if feedback_type == "INTERPRETATION"
+                   else self.USEFULNESS_VALUES)
+        if value not in allowed:
+            raise ValueError("value must be one of {}".format(list(allowed)))
+        intervention_id = str(intervention_id or "").strip()
+        if not intervention_id:
+            raise ValueError("intervention_id is required")
+        source = str(source or "user").strip() or "user"
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._lock:
+            self._connection.execute(
+                """INSERT INTO intervention_feedback
+                   (intervention_id, feedback_type, value, note, source, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(intervention_id, feedback_type, source) DO UPDATE SET
+                       value = excluded.value,
+                       note = excluded.note,
+                       created_at = excluded.created_at
+                """,
+                (intervention_id, feedback_type, value,
+                 str(note).strip() if note else None, source, now),
+            )
+            row = self._connection.execute(
+                """SELECT * FROM intervention_feedback
+                   WHERE intervention_id = ? AND feedback_type = ? AND source = ?""",
+                (intervention_id, feedback_type, source),
+            ).fetchone()
+        return dict(row) if row else {}
+
+    def query_intervention_feedback(
+        self, intervention_id: Optional[str] = None, limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        if intervention_id:
+            query = ("SELECT * FROM intervention_feedback WHERE intervention_id = ? "
+                     "ORDER BY created_at DESC LIMIT ?")
+            parameters: list = [str(intervention_id), limit]
+        else:
+            query = "SELECT * FROM intervention_feedback ORDER BY created_at DESC LIMIT ?"
+            parameters = [limit]
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return [dict(row) for row in rows]
+
     def insert_outcome(self, outcome: InterventionOutcome) -> bool:
         if not isinstance(outcome, InterventionOutcome):
             raise TypeError("SQLiteStore expects InterventionOutcome instances")
@@ -1716,6 +2313,9 @@ class SQLiteStore:
             outcome.recovery_time.isoformat().replace("+00:00", "Z") if outcome.recovery_time else None,
             outcome.recovery_session_id, outcome.recovery_duration_seconds,
             outcome.intervention_type, outcome.meme_id,
+            outcome.detection_id, outcome.response_id, outcome.delivery_state,
+            outcome.user_action, outcome.attribution,
+            1 if outcome.break_context else 0,
         )
         with self._lock:
             existed = self._connection.execute(
@@ -1725,14 +2325,22 @@ class SQLiteStore:
                 """
                 INSERT INTO intervention_outcomes
                 (id, intervention_id, intervention_time, recovery_status, recovery_time,
-                 recovery_session_id, recovery_duration_seconds, intervention_type, meme_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 recovery_session_id, recovery_duration_seconds, intervention_type, meme_id,
+                 detection_id, response_id, delivery_state, user_action, attribution,
+                 break_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     recovery_status = excluded.recovery_status,
                     recovery_time = excluded.recovery_time,
                     recovery_session_id = excluded.recovery_session_id,
                     recovery_duration_seconds = excluded.recovery_duration_seconds,
-                    meme_id = excluded.meme_id
+                    meme_id = excluded.meme_id,
+                    detection_id = excluded.detection_id,
+                    response_id = excluded.response_id,
+                    delivery_state = excluded.delivery_state,
+                    user_action = excluded.user_action,
+                    attribution = excluded.attribution,
+                    break_context = excluded.break_context
                 """,
                 values,
             )
@@ -1767,6 +2375,12 @@ class SQLiteStore:
                 recovery_session_id=row["recovery_session_id"],
                 recovery_duration_seconds=row["recovery_duration_seconds"],
                 intervention_type=row["intervention_type"], meme_id=row["meme_id"], outcome_id=row["id"],
+                detection_id=row["detection_id"] if "detection_id" in row.keys() else None,
+                response_id=row["response_id"] if "response_id" in row.keys() else None,
+                delivery_state=row["delivery_state"] if "delivery_state" in row.keys() else None,
+                user_action=row["user_action"] if "user_action" in row.keys() else None,
+                attribution=row["attribution"] if "attribution" in row.keys() else None,
+                break_context=bool(row["break_context"]) if "break_context" in row.keys() else False,
             )
             for row in rows
         ]
@@ -1801,6 +2415,10 @@ class SQLiteStore:
             record.latency_ms,
             record.decision,
             record.reason,
+            record.reasoning_json,
+            record.reasoning_version,
+            record.response_class,
+            record.intervention_json,
         )
         with self._lock:
             cursor = self._connection.execute(
@@ -1810,8 +2428,9 @@ class SQLiteStore:
                  window_minutes, feature_version, candidate_score, signals_json,
                  tracker_state, model_verdict, model_confidence, severity,
                  recommended_intervention, provider, model, latency_ms,
-                 decision, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 decision, reason, reasoning_json, reasoning_version,
+                 response_class, intervention_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, values,
             )
         return cursor.rowcount == 1

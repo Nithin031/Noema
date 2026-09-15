@@ -57,6 +57,14 @@ class DetectionRecord:
     latency_ms: Optional[float]
     decision: str
     reason: str
+    # V3 reasoning persistence. Pre-V3 rows carry the defaults: no stored
+    # rationale, no reasoning version, no response class.
+    reasoning_json: str = "{}"
+    reasoning_version: Optional[str] = None
+    response_class: Optional[str] = None
+    # V4 intervention-decision persistence. Absent on rows predating the
+    # intervention reasoner; readers treat missing as "no decision".
+    intervention_json: str = "{}"
 
     def to_dict(self) -> Dict[str, Any]:
         def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -68,6 +76,14 @@ class DetectionRecord:
             signals = _json.loads(self.signals_json or "{}")
         except ValueError:
             signals = {}
+        try:
+            reasoning = _json.loads(self.reasoning_json or "{}")
+        except ValueError:
+            reasoning = {}
+        try:
+            intervention = _json.loads(self.intervention_json or "{}")
+        except ValueError:
+            intervention = {}
         return {
             "detection_id": self.detection_id,
             "timestamp": _iso(self.timestamp),
@@ -88,6 +104,10 @@ class DetectionRecord:
             "latency_ms": self.latency_ms,
             "decision": self.decision,
             "reason": self.reason,
+            "reasoning": reasoning,
+            "reasoning_version": self.reasoning_version,
+            "response_class": self.response_class,
+            "intervention_decision": intervention,
         }
 
     @classmethod
@@ -124,4 +144,8 @@ class DetectionRecord:
             latency_ms=_opt_float(row["latency_ms"]),
             decision=str(row["decision"]),
             reason=str(row["reason"]),
+            reasoning_json=str(row["reasoning_json"] or "{}") if "reasoning_json" in row.keys() else "{}",
+            reasoning_version=row["reasoning_version"] if "reasoning_version" in row.keys() else None,
+            response_class=row["response_class"] if "response_class" in row.keys() else None,
+            intervention_json=str(row["intervention_json"] or "{}") if "intervention_json" in row.keys() else "{}",
         )

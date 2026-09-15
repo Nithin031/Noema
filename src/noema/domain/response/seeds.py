@@ -1,0 +1,136 @@
+"""Seed content for the curated response library (V3).
+
+Every row is reviewed copy with bounded severity and an explicit cooldown.
+Placeholders are limited to {goal}, {minutes_away}, {distraction} — the
+renderer fills them from stored episode/goal strings only.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+
+def seed_responses() -> List[Dict[str, Any]]:
+    """Return the built-in curated response rows (stable ids)."""
+    return [
+        {
+            "id": "gentle_nudge_01",
+            "kind": "NUDGE",
+            "tone": "gentle",
+            "title": "Noema",
+            "body_template": "You've spent {minutes_away} minutes away from {goal}. Still with me?",
+            "asset_id": None,
+            "severity_min": 1,
+            "severity_max": 3,
+            "context_tags": ["early_drift"],
+            "cooldown_seconds": 3600.0,
+        },
+        {
+            "id": "gentle_nudge_02",
+            "kind": "TEXT",
+            "tone": "gentle",
+            "title": "Noema",
+            "body_template": "Quick check-in: {goal} is still open. Want to head back?",
+            "asset_id": None,
+            "severity_min": 1,
+            "severity_max": 2,
+            "context_tags": ["early_drift"],
+            "cooldown_seconds": 3600.0,
+        },
+        {
+            "id": "sarcastic_drake_01",
+            "kind": "MEME",
+            "tone": "sarcastic",
+            "title": "BRO",
+            "body_template": "{goal} can wait. {distraction} apparently cannot.",
+            "asset_id": "svg:text_card_dark",
+            "severity_min": 2,
+            "severity_max": 4,
+            "context_tags": ["sustained_drift"],
+            "cooldown_seconds": 7200.0,
+        },
+        {
+            "id": "playful_character_01",
+            "kind": "CHARACTER",
+            "tone": "playful",
+            "title": "Noema",
+            "body_template": "Bro. We were doing {goal}. {minutes_away} minutes ago.",
+            "asset_id": "svg:text_card_dark",
+            "severity_min": 2,
+            "severity_max": 5,
+            "context_tags": ["sustained_drift", "repeat_offense"],
+            "cooldown_seconds": 7200.0,
+        },
+        {
+            "id": "supportive_character_01",
+            "kind": "CHARACTER",
+            "tone": "supportive",
+            "title": "Noema",
+            "body_template": "Tough stretch. One small step back toward {goal} counts.",
+            "asset_id": "svg:text_card_dark",
+            "severity_min": 1,
+            "severity_max": 4,
+            "context_tags": ["sustained_drift", "post_break"],
+            "cooldown_seconds": 7200.0,
+        },
+        {
+            "id": "firm_challenge_01",
+            "kind": "CHALLENGE",
+            "tone": "firm",
+            "title": "Noema",
+            "body_template": "Challenge: 10 focused minutes on {goal}, starting now.",
+            "asset_id": None,
+            "severity_min": 3,
+            "severity_max": 5,
+            "context_tags": ["sustained_drift", "repeat_offense"],
+            "cooldown_seconds": 10800.0,
+        },
+        {
+            "id": "encouragement_01",
+            "kind": "ENCOURAGEMENT",
+            "tone": "supportive",
+            "title": "Noema",
+            "body_template": "You came back before — you can do it again. {goal} is waiting.",
+            "asset_id": None,
+            "severity_min": 1,
+            "severity_max": 3,
+            "context_tags": ["post_break", "recovery_zone"],
+            "cooldown_seconds": 3600.0,
+        },
+        {
+            "id": "sticker_nudge_01",
+            "kind": "STICKER",
+            "tone": "playful",
+            "title": "Noema",
+            "body_template": "Eyes up. {goal}.",
+            "asset_id": "svg:text_card_dark",
+            "severity_min": 1,
+            "severity_max": 2,
+            "context_tags": ["early_drift"],
+            "cooldown_seconds": 3600.0,
+        },
+        {
+            "id": "firm_nudge_01",
+            "kind": "NUDGE",
+            "tone": "firm",
+            "title": "Noema",
+            "body_template": "{minutes_away} minutes on {distraction}. Time to choose.",
+            "asset_id": None,
+            "severity_min": 3,
+            "severity_max": 5,
+            "context_tags": ["sustained_drift"],
+            "cooldown_seconds": 7200.0,
+        },
+        {
+            "id": "supportive_text_01",
+            "kind": "TEXT",
+            "tone": "supportive",
+            "title": "Noema",
+            "body_template": "No judgment — just a note that {goal} hasn't had you for a while.",
+            "asset_id": None,
+            "severity_min": 1,
+            "severity_max": 3,
+            "context_tags": ["early_drift", "post_break"],
+            "cooldown_seconds": 3600.0,
+        },
+    ]

@@ -79,7 +79,7 @@ function renderSourceSummary(aw) {
 async function refresh() {
   $("connection").textContent = "Refreshing…";
   try {
-    const [health, summary, events, sessions, meaningful, classifications, behavior, interventions, outcomes, memories, regs] = await Promise.all([
+    const [health, summary, events, sessions, meaningful, classifications, behavior, interventions, outcomes, memories, regs, feed, effectiveness, breakState] = await Promise.all([
       get("/api/daemon/health"),
       get("/api/dashboard/summary"),
       get("/api/events?limit=30&sort=desc"),
@@ -91,7 +91,14 @@ async function refresh() {
       get("/api/outcomes?limit=1"),
       get("/api/memories?limit=1"),
       get("/api/browser/registrations"),
+      get("/api/interventions/feed?limit=10").catch(() => ({ interventions: [] })),
+      get("/api/responses/effectiveness").catch(() => ({ effectiveness: [] })),
+      get("/api/break").catch(() => ({ break: { active: false } })),
     ]);
+
+    renderInterventions(feed.interventions || []);
+    renderEffectiveness(effectiveness.effectiveness || []);
+    renderBreak(breakState.break || {});
 
     $("connection").textContent = "Local API connected";
     $("connection").className = "pill ok";
@@ -209,6 +216,77 @@ async function categorize() {
     });
     $("tab").innerHTML += `<div class="row"><span>Category</span><span class="category">${esc(result.category || result.status)}</span></div>`;
   } catch (e) { alert(e.message); }
+}
+
+/* ═══ Interventions feed (V3) ═══ */
+function stateChip(item) {
+  const bits = [item.status];
+  if (item.delivered) bits.push("delivered");
+  if (item.interacted) bits.push("acted");
+  if (item.outcome) bits.push(item.outcome.recovery_status);
+  return bits.map(esc).join(" · ");
+}
+
+async function interventionAction(id, action, body) {
+  await post(`/api/interventions/${encodeURIComponent(id)}/action`,
+    Object.assign({ action: action }, body || {}));
+  await refresh();
+}
+
+async function interventionFeedback(id, feedbackType, value) {
+  await post(`/api/interventions/${encodeURIComponent(id)}/feedback`,
+    { feedback_type: feedbackType, value: value });
+  await refresh();
+}
+
+async function interventionBreak(id) {
+  await post(`/api/interventions/${encodeURIComponent(id)}/break`, { minutes: 5 });
+  await refresh();
+}
+
+function renderInterventions(list) {
+  const node = $("intervention-feed");
+  if (!node) return;
+  if (!list.length) {
+    node.innerHTML = `<div class="muted">No interventions yet. Drift-triggered actions will appear here with their delivery state and outcome.</div>`;
+    return;
+  }
+  node.innerHTML = list.map(item => {
+    const msg = item.message || {};
+    const outcome = item.outcome ? ` · outcome: ${esc(item.outcome.recovery_status)}${item.outcome.attribution ? ` (${esc(item.outcome.attribution)})` : ""}` : "";
+    const feedback = (item.feedback || []).map(fb => `${esc(fb.feedback_type)}:${esc(fb.value)}`).join(", ");
+    const open = item.status === "PLANNED" || item.status === "EXECUTED";
+    return `<div class="row"><span><strong>${esc(msg.title || item.mode || "Noema")}</strong> — ${esc(msg.body || item.reason || "")}<br><small>${esc(item.created_at || "")} · ${stateChip(item)}${outcome}${feedback ? ` · feedback: ${feedback}` : ""}</small></span><span>${
+      open
+        ? `<button class="small-action" onclick="interventionAction('${esc(item.id)}','LOCK_IN')">Lock in</button> `
+          + `<button class="small-action" onclick="interventionBreak('${esc(item.id)}')">5 min break</button> `
+          + `<button class="small-action" onclick="interventionFeedback('${esc(item.id)}','INTERPRETATION','WRONG')">Intentional</button> `
+          + `<button class="small-action" onclick="interventionFeedback('${esc(item.id)}','USEFULNESS','HELPFUL')">Helpful</button>`
+        : ""
+    }</span></div>`;
+  }).join("");
+}
+
+function renderEffectiveness(table) {
+  const node = $("response-table");
+  if (!node) return;
+  if (!table.length) {
+    node.innerHTML = `<tr><td colspan="5" class="muted">No response data yet.</td></tr>`;
+    return;
+  }
+  node.innerHTML = table.map(row =>
+    `<tr><td>${esc(row.id)}</td><td>${esc(row.kind)}</td><td>${esc(row.times_shown)}</td>`
+    + `<td>${esc(row.recovery_count)}</td>`
+    + `<td>${row.recovery_rate == null ? "—" : Math.round(Number(row.recovery_rate) * 100) + "%"}</td></tr>`
+  ).join("");
+}
+
+function renderBreak(info) {
+  const node = $("break-badge");
+  if (!node) return;
+  node.textContent = info && info.active
+    ? `On a break · back in ${Math.round(Number(info.remaining_seconds || 0) / 60)} min`
+    : "";
 }
 
 /* ═══ Wire up ═══ */

@@ -8,6 +8,23 @@ the version is `pyproject.toml` (mirrored by `noema.__version__`).
 
 ### Added
 
+- **V3 Phase 10 Meme Center + meme dataset ingestion + Intervention Studio.**
+  A local meme corpus (CSV + image directory) ingests idempotently into a
+  new `meme_assets` catalog (stable ids, OCR/sentiment provenance, no image
+  bytes in git, thumbnails cached locally). Assets and responses stay
+  separate concepts: assets are browsed/searched/filtered/favorited/tagged
+  in the Meme Center, then curated into intervention-ready `responses`
+  (new create/edit API, `asset_id` linkage, enable/disable honored by the
+  existing selector). Test delivery (`POST /api/responses/{id}/test`)
+  exercises the real bridge/toast path with zero persistence, so tests
+  never pollute effectiveness statistics. Intervention payloads now carry
+  `image_url` for dataset-backed responses, rendered by the Firefox
+  overlay (loopback-only URLs). New endpoints: `/api/meme-assets`,
+  `/api/meme-assets/stats|ingest|{id}|{id}/image|{id}/thumb|{id}/responses|
+  {id}/favorite|{id}/tags|{id}/enabled`, `POST /api/responses`,
+  `POST /api/responses/{id}`, `POST /api/responses/{id}/test`. New CLI:
+  `python -m noema memes ingest|stats`.
+
 - **Semantic V2 — three-valued goal alignment.** Goal *relevance* is now
   separated from the raw semantic *category*. `AlignmentResult` gains
   `relation` (`aligned` / `misaligned` / `unknown`), `goal_relevance`
@@ -26,6 +43,22 @@ the version is `pyproject.toml` (mirrored by `noema.__version__`).
   a single episode verdict is not shown as many independent judgments.
 - Licensing docs: `src/noema/docs/licensing/activitywatch.md` and
   `dependency-audit.md`.
+- **V3 Gemini reasoning + response system + intervention UX.** Fresh
+  realtime candidates are reasoned over by Gemini (`NOT_DISTRACTED /
+  UNCERTAIN / DISTRACTED / INTENTIONAL_BREAK` with response-class
+  recommendation; UNCERTAIN never confirms) via a pinned fast model
+  (`NOEMA_FAST_GEMINI_MODEL`); reasoning rationales persist on detection
+  rows. A curated response library (`responses` table + deterministic
+  selector + seed content) binds artifacts into interventions with
+  delivery-gated counters. Typed user actions (`LOCK_IN`, `5 MIN BREAK`,
+  `THIS IS INTENTIONAL`) drive break suppression, interpretation feedback
+  (`intervention_feedback`, separate from classification feedback), and
+  delivery-aware outcome attribution (`direct` / `ambient` / `none`).
+  New endpoints: `/api/responses`, `/api/responses/effectiveness`,
+  `/api/break`, `/api/interventions/feed`, `/api/interventions/{id}/
+  feedback`, `/api/interventions/{id}/break`. Shipped dashboard gains an
+  interventions feed with actions, response effectiveness, and break state;
+  the extension overlay renders curated assets with the three typed actions.
 
 ### Changed (public-release hardening)
 

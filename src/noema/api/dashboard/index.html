@@ -14,7 +14,7 @@
     <aside class="sidebar">
       <div class="brand-mark"><span class="brand-orbit">◈</span><div>NOEMA<small>PERSONAL BEHAVIORAL INTELLIGENCE</small></div></div>
       <div class="side-label">Workspace</div>
-      <nav><a class="active" href="#overview"><b>⌁</b><span>Overview</span></a><a href="#aw-summary"><b>◫</b><span>Activity summary</span></a><a href="#tab-intelligence"><b>◎</b><span>Current tab</span></a><a href="#activities"><b>≡</b><span>Activity stream</span></a></nav>
+      <nav><a class="active" href="#overview"><b>⌁</b><span>Overview</span></a><a href="#aw-summary"><b>◫</b><span>Activity summary</span></a><a href="#tab-intelligence"><b>◎</b><span>Current tab</span></a><a href="#activities"><b>≡</b><span>Activity stream</span></a><a href="#interventions"><b>✦</b><span>Interventions</span></a></nav>
       <div class="side-bottom"><div class="local-badge"><span class="pulse-dot"></span>LOCAL CORE ONLINE</div><small>Nothing leaves this computer<br>Collector · Hosted AI · SQLite</small></div>
     </aside>
     <section class="content" id="overview">
@@ -60,6 +60,9 @@
 
       <!-- ═══ ACTIVITY TABLE ═══ -->
       <section class="panel activity-panel" id="activities"><div class="panel-title"><div><span class="mini-kicker">RAW → MEANING</span><h3>Recent activity stream</h3></div><span id="updated" class="last-updated">Updating…</span></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Application</th><th>Domain</th><th>Duration</th><th>Category</th><th>Signal</th></tr></thead><tbody id="events"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table></div></section>
+
+      <!-- ═══ INTERVENTIONS ═══ -->
+      <section class="panel activity-panel" id="interventions"><div class="panel-title"><div><span class="mini-kicker">DETECT → REASON → ACT → MEASURE</span><h3>Interventions</h3></div><span id="break-badge" class="last-updated"></span></div><div id="intervention-feed"><div class="muted">Loading…</div></div><div class="panel-title" style="margin-top:18px"><div><span class="mini-kicker">RECOVERY, NOT CLICKS</span><h3>Response effectiveness</h3></div></div><div class="table-wrap"><table><thead><tr><th>Response</th><th>Kind</th><th>Shown</th><th>Recovered</th><th>Recovery rate</th></tr></thead><tbody id="response-table"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody></table></div></section>
 
       <!-- ═══ INTENT ═══ -->
       <section class="panel intent-panel" id="intent"><div class="intent-icon">✦</div><div class="intent-copy"><span class="mini-kicker">DIRECT THE ENGINE</span><h3>What are you working toward?</h3><p>Give the intelligence layer context. It will align activity to this intent locally.</p></div><div class="intent-form"><input id="intent-input" placeholder="e.g. Finish the project documentation"><button id="save-intent" class="primary">Set intent <span>→</span></button><span id="intent-result" class="muted"></span></div></section>

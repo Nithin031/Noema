@@ -170,6 +170,18 @@ def _classifier(config: DaemonConfig) -> Classifier:
             timeout=config.ollama_timeout_seconds,
         )
     ) if config.ollama_enabled else None
+    # Classification owns meaning: only classification-tier models may
+    # serve it. Lower-tier models are rejected at startup, never silently
+    # substituted.
+    classification_models = list(
+        getattr(config, "classification_models", None)
+        or getattr(config, "gemini_models", None) or [])
+    if not classification_models:
+        raise ValueError("classification requires at least one tier model")
+    from noema.infrastructure.providers import TIER_CLASSIFICATION, assert_tier
+
+    classification_models = assert_tier(
+        classification_models, TIER_CLASSIFICATION, "classification_models")
     hosted = [
         GeminiProvider(
             model=model,
@@ -177,7 +189,7 @@ def _classifier(config: DaemonConfig) -> Classifier:
             base_url=config.gemini_base_url,
             timeout=config.gemini_timeout_seconds,
         )
-        for model in config.gemini_models
+        for model in classification_models
     ]
     openrouter = _openrouter_providers(config)
     # Persisted quota ledger lives next to the database so daily
@@ -219,14 +231,32 @@ def _intervention_engine(config: DaemonConfig) -> InterventionEngine:
     ))
 
 
+def _gemini_providers(models: Any, config: DaemonConfig,
+                      timeout_seconds: float) -> list:
+    """Build one GeminiProvider per model name (tier-explicit callers only)."""
+    providers = []
+    for model in list(models or []):
+        name = str(model or "").strip()
+        if not name:
+            continue
+        providers.append(GeminiProvider(
+            model=name,
+            api_key_env=config.gemini_api_key_env,
+            base_url=config.gemini_base_url,
+            timeout=timeout_seconds,
+        ))
+    return providers
+
+
 def _realtime_setup(service: NoemaService, config: DaemonConfig,
                     classifier: Classifier) -> None:
     """Wire the real-time time scale: detector, tracker, fast verifier.
 
     The verifier reuses the existing provider abstraction on a separate
-    fast path (fast OpenRouter model → first Gemini model → Ollama tail).
-    Quota state is shared with the normal chain through the chain's
-    rate-limit table + persisted ledger, keyed by model name.
+    fast path (fast OpenRouter model → reasoning-tier Gemini models →
+    Ollama tail). Quota state is shared with the normal chain through the
+    chain's rate-limit table + persisted ledger, keyed by model name.
+    Reasoning-tier legs never include classification-tier models.
     """
     service.realtime_detector = DistractionCandidateDetector(DetectorConfig(
         enter_threshold=config.detector_enter_threshold,
@@ -248,23 +278,39 @@ def _realtime_setup(service: NoemaService, config: DaemonConfig,
                 timeout=config.fast_model_timeout_seconds,
                 title=config.openrouter_title,
             )
-    fast_gemini = None
+    reasoning_models = list(getattr(config, "reasoning_models", None) or [])
     try:
-        first_gemini = (config.gemini_models or [None])[0]
+        pinned = str(getattr(config, "fast_gemini_model", "") or "").strip()
     except (AttributeError, TypeError):
-        first_gemini = None
-    if first_gemini:
-        fast_gemini = GeminiProvider(
-            model=first_gemini,
-            api_key_env=config.gemini_api_key_env,
-            base_url=config.gemini_base_url,
-            timeout=config.fast_model_timeout_seconds,
-        )
+        pinned = ""
+    if pinned:
+        # Explicit pin wins and leads the reasoning ranking.
+        reasoning_models = [pinned] + [
+            model for model in reasoning_models if model != pinned]
+    reasoning_providers = _gemini_providers(
+        reasoning_models, config, config.fast_model_timeout_seconds)
+    fast_gemini = reasoning_providers[0] if reasoning_providers else None
     service.fast_verifier = FastModelVerifier(
         chain=chain if isinstance(chain, ProviderChain) else None,
         fast_openrouter=fast_openrouter,
         fast_gemini=fast_gemini,
+        reasoning_providers=reasoning_providers[1:],
         config=VerificationConfig(timeout_seconds=config.fast_model_timeout_seconds),
+    )
+    # Intervention reasoning + meme decisions share the reasoning tier
+    # (meme/auxiliary lists when pinned, else the reasoning ranking).
+    # No classification-tier model ever serves these paths.
+    from noema.application.meme_decision import MemeDecider
+    from noema.application.realtime.intervention import InterventionReasoner
+
+    meme_models = list(getattr(config, "meme_models", None) or reasoning_models)
+    service.intervention_reasoner = InterventionReasoner(
+        legs=_gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
+        observer=getattr(chain, "observer", None),
+    )
+    service.meme_decider = MemeDecider(
+        legs=_gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
+        observer=getattr(chain, "observer", None),
     )
 
 
@@ -279,14 +325,18 @@ def _local_ollama_client(config: DaemonConfig) -> OllamaClient:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
-    if raw and raw[0] in ("benchmark", "metrics", "telemetry"):
-        # Benchmark/metrics/telemetry subcommands share config loading with
-        # the daemon but never start it. Dispatched before flag parsing so
-        # the daemon parser stays untouched.
+    if raw and raw[0] in ("benchmark", "metrics", "telemetry", "memes"):
+        # Benchmark/metrics/telemetry/memes subcommands share config loading
+        # with the daemon but never start it. Dispatched before flag parsing
+        # so the daemon parser stays untouched.
         if raw[0] == "telemetry":
             from noema.cli.telemetry import main_telemetry
 
             return main_telemetry(raw[1:])
+        if raw[0] == "memes":
+            from noema.cli.memes import main_memes
+
+            return main_memes(raw[1:])
         from noema.cli.benchmark import main_benchmark, main_metrics
 
         handler = main_benchmark if raw[0] == "benchmark" else main_metrics
@@ -343,6 +393,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         meaningful_session_summarizer=MeaningfulSessionSummarizer(client=ollama_client),
     )
     _realtime_setup(service, config, classifier)
+    # Meme Center dataset locations (V3 Phase 10). Empty means image bytes
+    # do not resolve; the catalog still works on metadata alone.
+    service._meme_dataset_dir = str(getattr(config, "meme_dataset_dir", "") or "")
+    service._meme_thumbs_dir = str(getattr(config, "meme_thumbs_dir", "") or "")
+    # V3 curated responses seed idempotently at startup (lazy seeding in
+    # consider_intervention covers every other entry point).
+    try:
+        store.seed_responses()
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
     # Observability: one recorder observes chain, classifier, service,
     # workers, and API. Product code paths are unchanged when absent;
     # here it is always attached for production telemetry.

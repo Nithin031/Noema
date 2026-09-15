@@ -26,6 +26,11 @@ __pycache__
 logs/
 *.sqlite3
 
+# Local third-party dataset corpora (e.g. the Meme Center meme dataset:
+# thousands of images whose individual rights are unknown — local use
+# only, never committed, never redistributed by Noema)
+/images/
+
 # Dependencies (reinstallable; never commit)
 node_modules/
 
@@ -35,3 +40,8 @@ node_modules/
 # Optional local frontend workspace (not distributed; the daemon serves the
 # bundled static dashboard in src/noema/api/dashboard/ when web/dist/ is absent)
 web/
+.env.example
+.env.example
+.env.example
+.env.example
+.env.example

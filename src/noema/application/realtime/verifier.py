@@ -31,6 +31,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .reasoning import (
+    REASONING_VERSION,
+    build_reasoning_prompt,
+    uncertain_result,
+    validate_reasoning_payload,
+)
+
 VERIFIER_VERSION = "1"
 
 RECOMMENDED_INTERVENTIONS = (
@@ -176,11 +183,15 @@ class FastModelVerifier:
     def __init__(self, chain: Any = None,
                  fast_openrouter: Any = None,
                  fast_gemini: Any = None,
+                 reasoning_providers: Optional[List[Any]] = None,
                  config: Optional[VerificationConfig] = None,
                  observer: Any = None):
         self.chain = chain
         self.fast_openrouter = fast_openrouter
         self.fast_gemini = fast_gemini
+        # Explicit reasoning-tier legs (V4). Tried in order before the
+        # legacy single fast_gemini leg. Empty preserves legacy behavior.
+        self.reasoning_providers = list(reasoning_providers or [])
         self.config = config or VerificationConfig()
         self.attempts: List[Tuple[str, Optional[str]]] = []
         # Explicit telemetry hook; falls back to the chain's observer so
@@ -298,6 +309,201 @@ class FastModelVerifier:
                                  metadata=dict(metadata or {})))
         except Exception:
             return False
+
+    def _reasoning_legs(self) -> List[Any]:
+        """Leg order for reasoning calls: Gemini first, never OpenRouter.
+
+        The distraction-reasoning path is Gemini-only by product decision
+        (plus the local Ollama tail when the chain includes it). The legacy
+        ``_legs`` order (fast OpenRouter first) is preserved for the
+        boolean ``verify`` path. When no Gemini/Ollama leg is configured
+        (tests, minimal setups), any configured leg may serve reasoning so
+        the path stays exercisable; production wiring (OpenRouter disabled
+        by default) keeps this Gemini-first in practice.
+        """
+        legs = list(getattr(self, "reasoning_providers", None) or [])
+        if self.fast_gemini is not None:
+            legs.append(self.fast_gemini)
+        ollama = self._ollama
+        include = bool(getattr(self.chain, "include_ollama", False)) if self.chain else False
+        if include and ollama is not None:
+            legs.append(ollama)
+        if not legs:
+            legs = self._legs()
+        return legs
+
+    def verify_reasoning(self, context: Mapping[str, Any],
+                         telemetry: Optional[Mapping[str, Any]] = None):
+        """Run one Gemini reasoning call over an assembled context.
+
+        Returns a ``ReasoningResult``. Never raises for provider reasons:
+        AFK/break presence, empty context, missing legs, transport errors,
+        and malformed output all yield UNCERTAIN (no confirmation).
+        """
+        from noema.application.realtime.reasoning import ReasoningResult
+        from noema.observability.models import (
+            Pipeline,
+            Purpose,
+            new_request_id,
+            utcnow_iso,
+        )
+        from noema.observability.provider_telemetry import (
+            quota_scope_for,
+            take_usage,
+        )
+
+        tele = dict(telemetry or {})
+        tele.setdefault("purpose", Purpose.FAST_DISTRACTION)
+        tele.setdefault("pipeline", Pipeline.REALTIME_DETECTION)
+        tele["operation"] = "REASON"
+        if not tele.get("request_id"):
+            tele["request_id"] = new_request_id()
+        detection_id = tele.get("detection_id")
+        request_started = time.perf_counter()
+        presence = dict(context.get("presence") or {}) if isinstance(context, Mapping) else {}
+        state = str(presence.get("state") or "unknown").strip().lower()
+        if state == "afk":
+            return uncertain_result("presence is afk; no reasoning without an active user")
+        if not isinstance(context, Mapping) or not context:
+            return uncertain_result("empty reasoning context; nothing to reason about")
+        prompt = build_reasoning_prompt(context)
+        legs = self._reasoning_legs()
+        if not legs:
+            return uncertain_result("no reasoning provider is configured")
+        self.attempts = []
+        previous: Optional[tuple] = None
+        for provider in legs:
+            name = str(getattr(provider, "name", ""))
+            model = getattr(provider, "model", None)
+            self.attempts.append((name, model))
+            billable = self._usable(provider, prompt)
+            if billable < 0:
+                self._emit_operation(
+                    "quota_skip", str(model),
+                    metadata={"request_id": tele["request_id"], "provider": name,
+                              "billable_tokens": billable, "operation": "REASON"})
+                continue
+            quota_before = self._quota_snapshot(provider)
+            started = time.perf_counter()
+            try:
+                payload = self._call(provider, prompt)
+                call_error = None
+                latency_ms = round((time.perf_counter() - started) * 1000, 1)
+            except Exception as exc:
+                call_error = exc
+                latency_ms = round((time.perf_counter() - started) * 1000, 1)
+                payload = {}
+                state_obj = self._quota_state(provider)
+                if state_obj is not None:
+                    try:
+                        state_obj.record_failure(exc)
+                    except Exception:
+                        pass
+            stamp_iso, stamp_ms = self._now_pair()
+            verdict_preview = validate_reasoning_payload(payload) if call_error is None else None
+            self._emit_invocation(
+                request_id=tele["request_id"], timestamp_iso=stamp_iso,
+                timestamp_ms=stamp_ms, provider_name=name,
+                model=model, purpose=tele["purpose"],
+                pipeline=tele["pipeline"], operation="REASON",
+                kind="attempt", session_ids=[],
+                batch_size=0, attempt_number=0,
+                fallback_depth=max(0, len(self.attempts) - 1),
+                fallback_from=previous[0] if previous else None,
+                fallback_reason=str(previous[1])[:300] if previous else None,
+                usage=take_usage(provider) if call_error is None else None,
+                estimated_input_tokens=billable,
+                error=call_error,
+                success_payload=(verdict_preview is not None),
+                latency_ms=latency_ms,
+                context_window=self._context_window(model),
+                max_output_tokens=self.config.max_output_tokens,
+                quota_scope=quota_scope_for(name),
+                quota_before=quota_before,
+                quota_after=self._quota_snapshot(provider),
+                detection_id=detection_id,
+            )
+            if call_error is not None:
+                previous = (name, call_error)
+                continue
+            verdict = verdict_preview
+            if verdict is None:
+                state_obj = self._quota_state(provider)
+                if state_obj is not None:
+                    try:
+                        from noema.infrastructure.providers import ProviderError
+
+                        state_obj.record_failure(
+                            ProviderError("reasoning returned malformed output"))
+                    except Exception:
+                        pass
+                previous = (name, "malformed reasoning output")
+                continue
+            state_obj = self._quota_state(provider)
+            ledger = getattr(self.chain, "ledger", None) if self.chain else None
+            if state_obj is not None:
+                try:
+                    state_obj.record_success(billable)
+                except Exception:
+                    pass
+                if ledger is not None:
+                    try:
+                        ledger.consume("llm", model, billable)
+                    except Exception:
+                        pass
+            stamp_iso, stamp_ms = self._now_pair()
+            self._emit_invocation(
+                request_id=tele["request_id"], timestamp_iso=stamp_iso,
+                timestamp_ms=stamp_ms, provider_name=name,
+                model=model, purpose=tele["purpose"],
+                pipeline=tele["pipeline"], operation="REASON",
+                kind="request", session_ids=[],
+                batch_size=0, attempt_number=0,
+                fallback_depth=max(0, len(self.attempts) - 1),
+                fallback_from=previous[0] if previous else None,
+                fallback_reason=str(previous[1])[:300] if previous else None,
+                usage=None, estimated_input_tokens=None,
+                error=None, success_payload=True,
+                latency_ms=round((time.perf_counter() - request_started) * 1000, 1),
+                context_window=self._context_window(model),
+                max_output_tokens=self.config.max_output_tokens,
+                quota_scope=quota_scope_for(name),
+                quota_before=quota_before,
+                quota_after=self._quota_snapshot(provider),
+                detection_id=detection_id,
+            )
+            return ReasoningResult(
+                state=verdict["state"], confidence=verdict["confidence"],
+                severity=verdict["severity"],
+                evidence_quality=verdict["evidence_quality"],
+                reason=verdict["reason"],
+                intervention_worthwhile=verdict["intervention_worthwhile"],
+                recommended_response_class=verdict["recommended_response_class"],
+                evidence_gaps=tuple(verdict["evidence_gaps"]),
+                provider=name, model=model, latency_ms=latency_ms,
+                model_calls=1, attempts=tuple(self.attempts), skipped=False,
+            )
+        stamp_iso, stamp_ms = self._now_pair()
+        self._emit_invocation(
+            request_id=tele["request_id"], timestamp_iso=stamp_iso,
+            timestamp_ms=stamp_ms, provider_name="fast_path",
+            model=None, purpose=tele["purpose"],
+            pipeline=tele["pipeline"], operation="REASON",
+            kind="request", session_ids=[],
+            batch_size=0, attempt_number=0,
+            fallback_depth=max(0, len(self.attempts)),
+            fallback_from=previous[0] if previous else None,
+            fallback_reason=str(previous[1])[:300] if previous else "all legs failed or throttled",
+            usage=None, estimated_input_tokens=None,
+            error=previous[1] if isinstance(previous, tuple) and isinstance(previous[1], BaseException) else None,
+            success_payload=False,
+            latency_ms=round((time.perf_counter() - request_started) * 1000, 1),
+            context_window=None, max_output_tokens=self.config.max_output_tokens,
+            quota_scope=None, quota_before={}, quota_after={},
+            detection_id=detection_id,
+        )
+        return uncertain_result(
+            "all reasoning legs failed or were throttled; no confirmation")
 
     def verify(self, summary: Mapping[str, Any], candidate_score: float,
                reasons: Optional[List[str]] = None,

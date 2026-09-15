@@ -154,7 +154,7 @@ def test_failing_verifier_never_breaks_evaluation():
     result = drive(service, NOW)
 
     assert result["state"] == "CANDIDATE"
-    assert result["verification"]["concerning"] is False
+    assert result["reasoning"]["state"] == "UNCERTAIN"
     assert result["intervention"] is None
     assert store.query_interventions(limit=100000) == []
     store.close()

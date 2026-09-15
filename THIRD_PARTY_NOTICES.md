@@ -16,6 +16,22 @@ license table lives in
   `src/noema/infrastructure/activity_sources/native_*.py` are independent
   implementations using only the Python standard library.
 
+## Meme Center dataset corpus (local asset source, not distributed)
+
+- Dataset: third-party meme sentiment-analysis corpus (~6,992 images plus
+  `labels.csv` with OCR text and sentiment labels).
+- License: distribution listed as **GPL-2.0**; **individual image rights are
+  unknown** (internet memes of third-party origin).
+- Role in Noema: optional local asset source for the Meme Center. Ingestion
+  indexes metadata (filenames, OCR, sentiment labels) into the local
+  database and caches thumbnails locally; sentiment labels are preserved
+  verbatim as dataset metadata and are never treated as intervention
+  suitability, tone, or quality judgments.
+- Redistribution: **none**. The corpus lives outside the repository
+  (`/images/` is gitignored), is never committed, and Noema ships no
+  dataset images. Provenance (`source`, `source_ref`, license note) is
+  stored per asset in `meme_assets`.
+
 ## Runtime dependency
 
 - `google-genai` (Apache-2.0) — hosted (Gemini) classification SDK, imported
