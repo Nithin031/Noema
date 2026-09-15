@@ -132,3 +132,8 @@ main > .hero-section { border-top: none; }
 .stage-id { letter-spacing: .1em; flex: 1; text-align: left; }
 .stage-kind { font-size: 10px; color: var(--color-neutral-600); }
 .stage-detail { position: sticky; top: 76px; }
+
+/* — real-app links (see app-link.js) — */
+.app-status { color: var(--color-neutral-600); transition: color 160ms ease; }
+.app-status.online { color: var(--color-accent-300); }
+.app-status.offline { color: var(--color-neutral-600); }

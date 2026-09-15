@@ -53,10 +53,12 @@
           raw desktop telemetry into semantic activity episodes, compares them against stated intent, detects
           sustained drift, reasons about whether an intervention is appropriate, and measures whether it helped.
         </p>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 40px;">
-          <a class="btn btn-primary" href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener" style="padding: 10px 18px;">View the repository</a>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
+          <a class="btn btn-primary app-link" data-app-link href="http://127.0.0.1:8765/" style="padding: 10px 18px;">Open Noema</a>
+          <a class="btn btn-secondary" href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener" style="padding: 10px 18px;">View the repository</a>
           <a class="btn btn-secondary" href="#developers" style="padding: 10px 18px;">Run it locally</a>
         </div>
+        <p data-app-status role="status" class="mono app-status" style="margin: 0 0 28px; font-size: 10px; letter-spacing: .1em; min-height: 14px;">&nbsp;</p>
         <dl class="mono" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 18px 20px; margin: 0;
           border-top: 1px solid var(--color-divider); padding-top: 20px;">
           <div><dt style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 5px;">LICENSE</dt><dd style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">MPL-2.0</dd></div>
@@ -200,6 +202,7 @@
               <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">CONTEXT_SWITCHES</dt><dd style="margin: 0; color: var(--color-neutral-200);">6</dd></div>
               <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">OUTCOME</dt><dd style="margin: 0; color: var(--color-neutral-500);">unknown</dd></div>
             </dl>
+            <a class="app-link mono" data-app-link href="http://127.0.0.1:8765/#activities" style="display: inline-block; margin-top: 14px; font-size: 10px; letter-spacing: .1em;">VIEW LIVE ACTIVITY STREAM &rarr;</a>
           </div>
         </figure>
 
@@ -262,6 +265,7 @@
             <p class="mono" style="margin: 14px 0 0; font-size: 10px; line-height: 1.7; letter-spacing: .06em; color: var(--color-neutral-600);">
               ACTIONS ARE TYPED: LOCK_IN &middot; BREAK_5MIN &middot; INTENTIONAL<br>NOT GENERIC DISMISSALS
             </p>
+            <a class="app-link mono" data-app-link href="http://127.0.0.1:8765/#interventions" style="display: inline-block; margin-top: 14px; font-size: 10px; letter-spacing: .1em; color: var(--color-accent-300);">VIEW LIVE INTERVENTIONS &rarr;</a>
           </div>
         </figure>
       </div>
@@ -419,6 +423,7 @@
               Test interventions never contribute to effectiveness metrics. Noema does not claim that an
               intervention improves productivity &mdash; it reports what it measured.
             </p>
+            <a class="app-link mono" data-app-link href="http://127.0.0.1:8765/#interventions" style="display: inline-block; margin-top: 14px; font-size: 10px; letter-spacing: .1em; color: var(--color-accent-300);">VIEW RECOVERY RATE IN THE DASHBOARD &rarr;</a>
           </div>
         </div>
       </div>
@@ -556,7 +561,7 @@ python -m noema memes stats</pre>
 
       <div style="margin-top: 18px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); overflow: hidden;">
         <div class="mono" style="padding: 14px 16px; border-bottom: 1px solid var(--color-neutral-800); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">
-          <span>LOCAL REST API</span><span>http://127.0.0.1:8765</span>
+          <span>LOCAL REST API</span><span><a class="app-link" data-app-link href="http://127.0.0.1:8765/api/daemon/health" style="color: inherit;">http://127.0.0.1:8765</a></span>
         </div>
         <div style="overflow-x: auto;">
           <table class="table mono" style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -677,5 +682,6 @@ python -m noema memes stats</pre>
 </main>
 
 <script src="stages.js"></script>
+<script src="app-link.js"></script>
 </body>
 </html>
