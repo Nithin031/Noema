@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noema — Personal Behavioral Intelligence</title>
+<meta name="description" content="Noema is a local-first system that turns raw desktop activity into semantic activity episodes, compares them against stated intent, detects sustained behavioral drift, reasons about intervention, and measures what happened afterward.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="wrap site-nav">
+    <a href="#top" class="brand">
+      <span class="mono brand-name">NOEMA</span>
+      <span class="mono brand-version">v0.14.0</span>
+    </a>
+    <div class="nav-spacer"></div>
+    <div class="mono nav-links">
+      <a href="#product" class="nav-link">PRODUCT</a>
+      <a href="#system" class="nav-link">SYSTEM</a>
+      <a href="#models" class="nav-link">MODELS</a>
+      <a href="#outcomes" class="nav-link">OUTCOMES</a>
+      <a href="#developers" class="nav-link">DEVELOPERS</a>
+      <a href="https://github.com/Nithin031/Noema/tree/main/src/noema/docs" target="_blank" rel="noopener" class="nav-link">DOCS</a>
+    </div>
+    <a class="btn btn-secondary mono nav-cta" href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener">GITHUB &#8599;</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <section class="hero-section">
+    <div class="wrap" style="padding-top: clamp(56px, 9vw, 116px); padding-bottom: clamp(40px, 6vw, 72px);
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: clamp(32px, 5vw, 64px); align-items: start;">
+      <div style="min-width: 0;">
+        <div class="mono" style="display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: .16em; color: var(--color-accent-300); margin-bottom: 28px;">
+          <span style="width: 28px; height: 1px; background: var(--color-accent); display: block;"></span>
+          PERSONAL BEHAVIORAL INTELLIGENCE &middot; LOCAL-FIRST
+        </div>
+        <h1 style="font-size: clamp(38px, 6vw, 62px); line-height: 1.04; letter-spacing: -0.03em; margin: 0 0 24px; max-width: 18ch;">
+          Understand what you're doing. Compare it to what you meant.
+        </h1>
+        <p style="font-size: clamp(16px, 1.6vw, 18px); line-height: 1.6; color: var(--color-neutral-300); max-width: 54ch; margin: 0 0 14px; text-wrap: pretty;">
+          Most productivity software can tell you where your time went. Noema is interested in a harder
+          question: <em style="color: var(--color-text); font-style: normal;">what was I actually doing, and was it what I intended to do?</em>
+        </p>
+        <p style="font-size: 15px; line-height: 1.65; color: var(--color-neutral-400); max-width: 56ch; margin: 0 0 32px; text-wrap: pretty;">
+          A stream of windows, tabs, presence signals and heartbeats is not behavior by itself. Noema turns
+          raw desktop telemetry into semantic activity episodes, compares them against stated intent, detects
+          sustained drift, reasons about whether an intervention is appropriate, and measures whether it helped.
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 40px;">
+          <a class="btn btn-primary" href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener" style="padding: 10px 18px;">View the repository</a>
+          <a class="btn btn-secondary" href="#developers" style="padding: 10px 18px;">Run it locally</a>
+        </div>
+        <dl class="mono" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 18px 20px; margin: 0;
+          border-top: 1px solid var(--color-divider); padding-top: 20px;">
+          <div><dt style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 5px;">LICENSE</dt><dd style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">MPL-2.0</dd></div>
+          <div><dt style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 5px;">RUNTIME</dt><dd style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">Python 3.9+</dd></div>
+          <div><dt style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 5px;">DAEMON API</dt><dd style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">127.0.0.1:8765</dd></div>
+          <div><dt style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 5px;">STORE</dt><dd style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">local SQLite</dd></div>
+        </dl>
+      </div>
+
+      <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-lg);
+        background: linear-gradient(180deg, #1b1e2c 0%, #191b28 100%); box-shadow: var(--shadow-md); overflow: hidden;">
+        <div class="mono" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          padding: 11px 16px; border-bottom: 1px solid var(--color-neutral-800); font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-500);">
+          <span>PIPELINE &middot; TWO LANES</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px;">
+            <span class="pulse-dot" style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent);"></span>
+            LOOPBACK ONLY
+          </span>
+        </div>
+        <div style="padding: 20px 16px 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 16px;">
+          <div style="min-width: 0;">
+            <div class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 12px;">SEMANTIC &middot; ~20 MIN</div>
+            <ol class="mono" style="list-style: none; margin: 0; padding: 0; display: grid; gap: 7px;">
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">OBSERVE</li>
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">UNDERSTAND</li>
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">CLASSIFY</li>
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">ALIGN</li>
+            </ol>
+          </div>
+          <div style="min-width: 0;">
+            <div class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin-bottom: 12px;">REALTIME &middot; ~60 SEC</div>
+            <ol class="mono" style="list-style: none; margin: 0; padding: 0; display: grid; gap: 7px;">
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">DETECT DRIFT</li>
+              <li style="font-size: 12px; color: var(--color-accent-200); border: 1px solid var(--color-accent-700); border-radius: var(--radius-sm); padding: 7px 10px; background: color-mix(in srgb, var(--color-accent) 10%, transparent);">REASON</li>
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">POLICY GATE</li>
+              <li style="font-size: 12px; color: var(--color-neutral-200); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 7px 10px;">INTERVENE &rarr; MEASURE</li>
+            </ol>
+          </div>
+        </div>
+        <div style="padding: 14px 16px 18px;">
+          <svg viewBox="0 0 320 70" width="100%" height="70" role="img"
+            aria-label="Both lanes converge on the deterministic policy gate before any intervention is delivered."
+            style="display: block; overflow: visible;">
+            <path class="trace-path" d="M4 12 H150 Q162 12 162 35 H316"></path>
+            <path class="trace-path trace-b" d="M4 58 H150 Q162 58 162 35 H316"></path>
+            <circle cx="162" cy="35" r="3" fill="var(--color-accent)"></circle>
+            <text x="316" y="30" text-anchor="end" class="mono" style="font-size: 9px; letter-spacing: .12em; fill: var(--color-neutral-500);">POLICY GATE</text>
+          </svg>
+        </div>
+        <p class="mono" style="margin: 0; padding: 12px 16px; border-top: 1px solid var(--color-neutral-800);
+          font-size: 10px; line-height: 1.6; letter-spacing: .06em; color: var(--color-neutral-600);">
+          THE SEMANTIC LANE OWNS EPISODES AND CLASSIFICATION. THE REALTIME LANE OWNS DRIFT.<br>
+          NOTHING IN THE REALTIME LANE WRITES A SEMANTIC CLASSIFICATION.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap" style="padding-top: clamp(40px, 6vw, 80px); padding-bottom: clamp(40px, 6vw, 80px);">
+      <hr class="hr" style="margin: 0 0 clamp(32px, 5vw, 56px);">
+      <p class="mono eyebrow">THE CENTRAL DISTINCTION</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: clamp(28px, 4vw, 56px); align-items: start;">
+        <div style="min-width: 0;">
+          <h2 style="font-size: clamp(26px, 3vw, 34px); letter-spacing: -0.02em; margin: 0 0 16px; max-width: 22ch;">Noema keeps seven concepts separate</h2>
+          <p style="color: var(--color-neutral-400); max-width: 50ch; margin: 0 0 12px; text-wrap: pretty;">
+            A window title is evidence, not a conclusion. Being productive is not the same as being aligned
+            with the active goal. A displayed intervention is not a successful one. The system refuses to collapse
+            these into a single score.
+          </p>
+          <p style="color: var(--color-neutral-400); max-width: 50ch; margin: 0; text-wrap: pretty;">
+            Insufficient evidence resolves to <span class="mono" style="font-size: 13px; color: var(--color-accent-300);">UNKNOWN</span>
+            rather than an invented verdict.
+          </p>
+        </div>
+        <ol style="min-width: 0; list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--color-divider);">
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">01</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">ACTIVITY</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">raw telemetry</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">02</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">MEANING</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">semantic episode</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">03</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">INTENT</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">stated goal</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">04</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">ALIGNMENT</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">aligned / misaligned / unknown</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">05</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">DRIFT</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">sustained, not momentary</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">06</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-text); flex: 1;">INTERVENTION</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">policy-gated action</span>
+          </li>
+          <li class="mono" style="display: flex; align-items: baseline; gap: 16px; padding: 13px 4px; border-bottom: 1px solid var(--color-divider);">
+            <span style="font-size: 10px; color: var(--color-neutral-700); width: 22px;">07</span>
+            <span style="font-size: 14px; letter-spacing: .08em; color: var(--color-accent-200); flex: 1;">OUTCOME</span>
+            <span style="font-size: 11px; color: var(--color-neutral-500);">measured recovery</span>
+          </li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="product" class="bg-tint" style="background: linear-gradient(180deg, #181a27 0%, var(--color-bg) 100%);">
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">WHAT IT ACTUALLY DOES</p>
+      <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0 0 14px; max-width: 26ch;">One episode, carried through the loop</h2>
+      <p style="color: var(--color-neutral-400); max-width: 62ch; margin: 0 0 clamp(28px, 4vw, 48px); text-wrap: pretty;">
+        The surfaces below are composed from Noema's own data contracts &mdash; <span class="mono" style="font-size: 13px;">MeaningfulSession</span>,
+        <span class="mono" style="font-size: 13px;">BehaviorObservation</span>,
+        <span class="mono" style="font-size: 13px;">InterventionDecision</span>,
+        <span class="mono" style="font-size: 13px;">InterventionOutcome</span>. Field names and value
+        vocabularies are real; the values shown are an illustrative example, not production statistics.
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; align-items: start;">
+        <figure style="min-width: 0; margin: 0;">
+          <figcaption class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin: 0 0 10px;">1 &middot; SEMANTIC EPISODE</figcaption>
+          <div style="border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1b1e2c; padding: 16px;">
+            <div class="mono" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--color-neutral-500); margin-bottom: 14px;">
+              <span>14:32 &rarr; 15:04</span><span>ACTIVE</span>
+            </div>
+            <p style="margin: 0 0 4px; font-size: 10px; letter-spacing: .14em;" class="mono"><span style="color: var(--color-neutral-600);">PRIMARY TOPIC</span></p>
+            <p style="margin: 0 0 16px; font-size: 16px; color: var(--color-text);">Control systems coursework</p>
+            <dl class="mono" style="margin: 0; display: grid; gap: 8px; font-size: 11px;">
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">EVIDENCE_QUALITY</dt><dd style="margin: 0; color: var(--color-neutral-200);">strong</dd></div>
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">FOCUS_SCORE</dt><dd style="margin: 0; color: var(--color-neutral-200);">0.71</dd></div>
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">CONTEXT_SWITCHES</dt><dd style="margin: 0; color: var(--color-neutral-200);">6</dd></div>
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">OUTCOME</dt><dd style="margin: 0; color: var(--color-neutral-500);">unknown</dd></div>
+            </dl>
+          </div>
+        </figure>
+
+        <figure style="min-width: 0; margin: 0;">
+          <figcaption class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin: 0 0 10px;">2 &middot; ALIGNMENT + BEHAVIOR STATE</figcaption>
+          <div style="border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1b1e2c; padding: 16px;">
+            <p class="mono" style="margin: 0 0 4px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">ACTIVE INTENT</p>
+            <p style="margin: 0 0 14px; font-size: 15px; color: var(--color-text);">&ldquo;Study control systems before Thursday&rdquo;</p>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">
+              <span class="tag tag-outline mono" style="font-size: 10px; letter-spacing: .1em;">MISALIGNED</span>
+              <span class="tag tag-accent mono" style="font-size: 10px; letter-spacing: .1em;">DRIFTING</span>
+              <span class="tag tag-neutral mono" style="font-size: 10px; letter-spacing: .1em;">ACTIONABLE</span>
+            </div>
+            <dl class="mono" style="margin: 0; display: grid; gap: 8px; font-size: 11px;">
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">DISTRACTION_SCORE</dt><dd style="margin: 0; color: var(--color-neutral-200);">0.78</dd></div>
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">ENTER / EXIT</dt><dd style="margin: 0; color: var(--color-neutral-200);">0.70 / 0.50</dd></div>
+              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--color-divider); padding-top: 8px;"><dt style="color: var(--color-neutral-600);">PRESENCE</dt><dd style="margin: 0; color: var(--color-neutral-200);">active</dd></div>
+            </dl>
+            <p style="margin: 14px 0 0; font-size: 12px; line-height: 1.55; color: var(--color-neutral-400);">
+              Drift is accumulated over rolling windows with hysteresis, so a single off-goal minute does not
+              flip the state.
+            </p>
+          </div>
+        </figure>
+
+        <figure style="min-width: 0; margin: 0;">
+          <figcaption class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin: 0 0 10px;">3 &middot; REASONING DECISION</figcaption>
+          <pre class="mono" style="margin: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #15171f; padding: 16px; overflow-x: auto; font-size: 11.5px; line-height: 1.75; color: var(--color-neutral-300);">{
+  "should_intervene": <span style="color: var(--color-accent-200);">true</span>,
+  "type": <span style="color: var(--color-accent-200);">"MEME_NUDGE"</span>,
+  "severity": 3,
+  "tone": <span style="color: var(--color-accent-200);">"PLAYFUL"</span>,
+  "response_class":
+    <span style="color: var(--color-accent-200);">"PROCRASTINATION_CALLOUT"</span>,
+  "use_meme": <span style="color: var(--color-accent-200);">true</span>,
+  "confidence": 0.87
+}</pre>
+          <p style="margin: 12px 0 0; font-size: 12px; line-height: 1.55; color: var(--color-neutral-500);">
+            A structured decision contract. Noema does not expose model chain-of-thought &mdash; only the decision
+            and the evidence behind it.
+          </p>
+        </figure>
+
+        <figure style="min-width: 0; margin: 0;">
+          <figcaption class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); margin: 0 0 10px;">4 &middot; DELIVERED INTERVENTION</figcaption>
+          <div style="border: 1px solid var(--color-accent-700); border-radius: var(--radius-md);
+            background: linear-gradient(180deg, #202339 0%, #1a1c28 100%); box-shadow: var(--shadow-md); padding: 16px;">
+            <div class="mono" style="display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: .12em; color: var(--color-accent-300); margin-bottom: 14px;">
+              <span>NOEMA</span><span>OVERLAY &middot; MEME MODE</span>
+            </div>
+            <div class="mono" style="border: 1px dashed var(--color-neutral-700); border-radius: var(--radius-sm); height: 92px;
+              display: grid; place-items: center; font-size: 10px; letter-spacing: .12em; color: var(--color-neutral-600); margin-bottom: 14px;">SELECTED ASSET &middot; LOCAL</div>
+            <p style="margin: 0 0 6px; font-size: 15px; color: var(--color-text);">You said you were locking in.</p>
+            <p style="margin: 0 0 16px; font-size: 13px; color: var(--color-neutral-400);">Your current activity appears off your active goal.</p>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary mono" style="font-size: 10px; letter-spacing: .1em;">I'M LOCKING IN</button>
+              <button type="button" class="btn btn-secondary mono" style="font-size: 10px; letter-spacing: .1em;">GIVE ME 5 MIN</button>
+              <button type="button" class="btn btn-secondary mono" style="font-size: 10px; letter-spacing: .1em;">THIS IS INTENTIONAL</button>
+            </div>
+            <p class="mono" style="margin: 14px 0 0; font-size: 10px; line-height: 1.7; letter-spacing: .06em; color: var(--color-neutral-600);">
+              ACTIONS ARE TYPED: LOCK_IN &middot; BREAK_5MIN &middot; INTENTIONAL<br>NOT GENERIC DISMISSALS
+            </p>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="system">
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">HOW NOEMA THINKS</p>
+      <div style="display: flex; justify-content: space-between; align-items: end; gap: 24px; flex-wrap: wrap; margin-bottom: clamp(28px, 4vw, 44px);">
+        <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0; max-width: 24ch;">Eleven stages, each with a contract</h2>
+        <p class="mono" style="margin: 0; font-size: 11px; letter-spacing: .1em; color: var(--color-neutral-600);">SELECT A STAGE &rarr;</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(20px, 3vw, 40px); align-items: start;">
+        <ol class="stage-list" id="stage-list"></ol>
+
+        <div class="stage-detail" style="min-width: 0; border: 1px solid var(--color-neutral-800);
+          border-radius: var(--radius-md); background: #1b1e2c; padding: clamp(16px, 2.4vw, 24px);">
+          <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px;">
+            <span id="stage-active-num" class="mono" style="font-size: 11px; color: var(--color-neutral-600);"></span>
+            <h3 id="stage-active-id" class="mono" style="margin: 0; font-size: 17px; letter-spacing: .08em; color: var(--color-text);"></h3>
+          </div>
+          <dl style="margin: 0; display: grid; gap: 16px;">
+            <div>
+              <dt class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-accent-300); margin-bottom: 6px;">INPUT</dt>
+              <dd id="stage-active-input" style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--color-neutral-300);"></dd>
+            </div>
+            <div>
+              <dt class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-accent-300); margin-bottom: 6px;">PROCESS</dt>
+              <dd id="stage-active-process" style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--color-neutral-300);"></dd>
+            </div>
+            <div>
+              <dt class="mono" style="font-size: 10px; letter-spacing: .14em; color: var(--color-accent-300); margin-bottom: 6px;">OUTPUT</dt>
+              <dd id="stage-active-output" style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--color-neutral-300);"></dd>
+            </div>
+          </dl>
+          <p id="stage-active-source" class="mono" style="margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--color-divider);
+            font-size: 11px; line-height: 1.6; color: var(--color-neutral-600); word-break: break-word;"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="models" style="background: #14161f;">
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">MODEL ROUTING</p>
+      <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0 0 14px; max-width: 28ch;">Classification is not intervention reasoning</h2>
+      <p style="color: var(--color-neutral-400); max-width: 60ch; margin: 0 0 clamp(28px, 4vw, 44px); text-wrap: pretty;">
+        The two jobs run on separate tiers, and the provider layer rejects cross-tier substitution rather than
+        silently spending quota from the wrong model class.
+      </p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px;">
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1a1c28; padding: 20px;">
+          <p class="mono" style="margin: 0 0 16px; font-size: 11px; letter-spacing: .14em; color: var(--color-accent-300);">CLASSIFICATION TIER</p>
+          <ol class="mono" style="list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 6px; font-size: 12.5px; color: var(--color-neutral-200);">
+            <li style="border-left: 2px solid var(--color-accent-700); padding: 5px 0 5px 12px;">Gemini 3.8 Flash</li>
+            <li style="border-left: 2px solid var(--color-neutral-800); padding: 5px 0 5px 12px;">Gemini 3.7 Flash</li>
+            <li style="border-left: 2px solid var(--color-neutral-800); padding: 5px 0 5px 12px;">Gemini 3.6 Flash</li>
+          </ol>
+          <p style="margin: 0; font-size: 13px; line-height: 1.6; color: var(--color-neutral-400);">
+            Reserved for classifying episodes. Never used for meme selection, intervention copy, strategy or
+            auxiliary enrichment.
+          </p>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1a1c28; padding: 20px;">
+          <p class="mono" style="margin: 0 0 16px; font-size: 11px; letter-spacing: .14em; color: var(--color-accent-300);">REASONING TIER</p>
+          <ol class="mono" style="list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 6px; font-size: 12.5px; color: var(--color-neutral-200);">
+            <li style="border-left: 2px solid var(--color-accent-700); padding: 5px 0 5px 12px;">Gemini 3.5 Flash</li>
+            <li style="border-left: 2px solid var(--color-neutral-800); padding: 5px 0 5px 12px;">Gemini 3.5 Flash Lite</li>
+            <li style="border-left: 2px solid var(--color-neutral-800); padding: 5px 0 5px 12px;">Gemini 3.1 Flash Lite</li>
+            <li style="border-left: 2px solid var(--color-neutral-800); padding: 5px 0 5px 12px;">Gemini 2.5 Flash</li>
+          </ol>
+          <p style="margin: 0; font-size: 13px; line-height: 1.6; color: var(--color-neutral-400);">
+            Intervention reasoning, response strategy, severity, tone, meme intent and ranking, contextual copy.
+          </p>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1a1c28; padding: 20px;">
+          <p class="mono" style="margin: 0 0 16px; font-size: 11px; letter-spacing: .14em; color: var(--color-accent-300);">FAILURE IS A STATE</p>
+          <div class="mono" style="display: grid; gap: 6px; margin-bottom: 16px; font-size: 11.5px;">
+            <span style="color: var(--color-neutral-300);">RATE_LIMITED &middot; TIMEOUT</span>
+            <span style="color: var(--color-neutral-300);">INVALID_OUTPUT &middot; PROVIDER_ERROR</span>
+            <span style="color: var(--color-neutral-300);">UNAVAILABLE</span>
+          </div>
+          <div class="mono" style="border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 16px;
+            font-size: 12px; line-height: 1.9; color: var(--color-neutral-400);">
+            <span style="color: var(--color-neutral-200);">429</span> must not become<br>
+            <span style="color: var(--color-neutral-200);">NEUTRAL 40%</span>
+          </div>
+          <p style="margin: 0; font-size: 13px; line-height: 1.6; color: var(--color-neutral-400);">
+            A failed model call never becomes a semantic label. Sessions stay <span class="mono" style="font-size: 12px;">pending</span>
+            with retry state, and the UI shows an explicit unavailable state.
+          </p>
+        </div>
+      </div>
+      <div style="margin-top: 18px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1a1c28; padding: 20px;
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 20px;">
+        <div>
+          <p class="mono" style="margin: 0 0 10px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">USAGE RECORDED BY PURPOSE</p>
+          <p class="mono" style="margin: 0; font-size: 12px; line-height: 1.8; color: var(--color-neutral-300);">CLASSIFICATION<br>INTERVENTION_REASONING<br>MEME_SELECTION<br>INTERVENTION_COPY</p>
+        </div>
+        <div>
+          <p class="mono" style="margin: 0 0 10px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">HONESTY RULES</p>
+          <p style="margin: 0; font-size: 13px; line-height: 1.65; color: var(--color-neutral-400);">
+            Token counts are exact only when the provider reported them, otherwise labelled estimated or
+            unknown &mdash; never zero-filled. P95/P99 require n&ge;5 samples. Unknown pricing is null, never $0.
+          </p>
+        </div>
+        <div>
+          <p class="mono" style="margin: 0 0 10px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">FULLY LOCAL OPTION</p>
+          <p style="margin: 0 0 10px; font-size: 13px; line-height: 1.65; color: var(--color-neutral-400);">Hosted inference is optional. Ollama runs the same contracts on-device.</p>
+          <code class="mono" style="font-size: 12px; color: var(--color-accent-200);">NOEMA_PROVIDER=ollama</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="outcomes">
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">THE LOOP IS CLOSED</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: clamp(28px, 4vw, 56px); align-items: start;">
+        <div style="min-width: 0;">
+          <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0 0 16px; max-width: 24ch;">An intervention that was displayed is not an intervention that worked</h2>
+          <p style="color: var(--color-neutral-400); max-width: 52ch; margin: 0 0 12px; text-wrap: pretty;">
+            Noema records what happened afterwards. Recovery means a later productive episode lasting at least
+            three minutes &mdash; not a click, and never AFK time.
+          </p>
+          <p style="color: var(--color-neutral-400); max-width: 52ch; margin: 0 0 20px; text-wrap: pretty;">
+            Attribution is typed, so not every productive session that follows gets credited to a nudge.
+          </p>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <span class="tag tag-accent mono" style="font-size: 10px; letter-spacing: .1em;">DIRECT</span>
+            <span class="tag tag-outline mono" style="font-size: 10px; letter-spacing: .1em;">AMBIENT</span>
+            <span class="tag tag-neutral mono" style="font-size: 10px; letter-spacing: .1em;">NONE</span>
+          </div>
+        </div>
+        <div style="min-width: 0;">
+          <ol style="list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--color-divider);">
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-neutral-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">01</span>INTERVENTION</li>
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-neutral-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">02</span>DISPLAYED &rarr; SEEN</li>
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-neutral-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">03</span>USER ACTION</li>
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-neutral-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">04</span>SUBSEQUENT ACTIVITY</li>
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-neutral-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">05</span>RECOVERY WINDOW</li>
+            <li class="mono" style="display: flex; gap: 14px; align-items: baseline; padding: 11px 4px; border-bottom: 1px solid var(--color-divider); font-size: 12.5px; letter-spacing: .08em; color: var(--color-accent-200);"><span style="color: var(--color-neutral-700); font-size: 10px;">06</span>OUTCOME &middot; RECOVERED / NOT_RECOVERED / INDETERMINATE</li>
+          </ol>
+          <div style="border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #1b1e2c; padding: 16px;">
+            <p class="mono" style="margin: 0 0 12px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">SMALL SAMPLES ARE GUARDED</p>
+            <div class="mono" style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--color-neutral-300);">
+              <span>1 show &middot; 1 recovery</span>
+              <span style="color: var(--color-neutral-600);">&rarr;</span>
+              <span style="color: var(--color-accent-200);">&ldquo;Not enough data&rdquo;</span>
+              <span style="color: var(--color-neutral-600);">not 100% effective</span>
+            </div>
+            <p style="margin: 12px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-neutral-400);">
+              Test interventions never contribute to effectiveness metrics. Noema does not claim that an
+              intervention improves productivity &mdash; it reports what it measured.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="background: #14161f;">
+    <div class="wrap section-pad">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(28px, 4vw, 48px); align-items: start;">
+        <div style="min-width: 0;">
+          <p class="mono eyebrow">MEME CENTER</p>
+          <h2 style="font-size: clamp(24px, 2.8vw, 32px); letter-spacing: -0.02em; margin: 0 0 16px; max-width: 24ch;">Assets are not responses, and responses are not interventions</h2>
+          <p style="color: var(--color-neutral-400); max-width: 50ch; margin: 0 0 12px; text-wrap: pretty;">
+            The Meme Center manages a local asset library and the curated response library that references it.
+            It is asset and response management &mdash; not the intervention engine.
+          </p>
+          <p style="color: var(--color-neutral-400); max-width: 50ch; margin: 0; text-wrap: pretty;">
+            Dataset sentiment labels are preserved verbatim as metadata and are never reinterpreted as
+            behavioral meaning. No dataset images are committed to the repository.
+          </p>
+        </div>
+        <div style="min-width: 0; display: grid; gap: 14px;">
+          <ol style="list-style: none; margin: 0; padding: 0; display: grid; gap: 8px;">
+            <li class="mono" style="display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 12px;">
+              <span style="letter-spacing: .1em; color: var(--color-neutral-200);">DATASET ROWS</span><span style="color: var(--color-neutral-400);">6,992</span>
+            </li>
+            <li class="mono" style="display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 12px;">
+              <span style="letter-spacing: .1em; color: var(--color-neutral-200);">VALID ASSETS INGESTED</span><span style="color: var(--color-neutral-400);">6,991</span>
+            </li>
+            <li class="mono" style="display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 12px;">
+              <span style="letter-spacing: .1em; color: var(--color-neutral-200);">INVALID &middot; REPORTED, NOT HIDDEN</span><span style="color: var(--color-neutral-400);">1</span>
+            </li>
+            <li class="mono" style="display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--color-accent-700); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 12px; background: color-mix(in srgb, var(--color-accent) 8%, transparent);">
+              <span style="letter-spacing: .1em; color: var(--color-accent-200);">CANDIDATES SENT TO MODEL</span><span style="color: var(--color-accent-200);">&le; 20</span>
+            </li>
+          </ol>
+          <p style="margin: 0; font-size: 13px; line-height: 1.65; color: var(--color-neutral-400);">
+            Retrieval is local and bounded &mdash; the model ranks a shortlist, never the whole corpus. Invalid asset
+            IDs returned by the model are rejected, and disabled assets cannot be delivered.
+          </p>
+          <div class="mono" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; letter-spacing: .08em; color: var(--color-neutral-500); border-top: 1px solid var(--color-divider); padding-top: 14px;">
+            <span>ASSET</span><span style="color: var(--color-neutral-700);">&rarr;</span>
+            <span>RETRIEVAL</span><span style="color: var(--color-neutral-700);">&rarr;</span>
+            <span>RANKING</span><span style="color: var(--color-neutral-700);">&rarr;</span>
+            <span>RESPONSE</span><span style="color: var(--color-neutral-700);">&rarr;</span>
+            <span style="color: var(--color-accent-200);">INTERVENTION</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">PRIVACY IS ARCHITECTURAL</p>
+      <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0 0 clamp(28px, 4vw, 44px); max-width: 30ch;">Filtering happens before persistence and before inference</h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 18px;">
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); padding: 20px;">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">NEVER COLLECTED OR SENT</p>
+          <ul style="margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--color-neutral-300);">
+            <li>Keystrokes</li><li>Screenshots</li><li>File contents</li>
+            <li>Complete browser history</li><li>Raw event streams to a model</li>
+          </ul>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); padding: 20px;">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">FAIL-CLOSED FILTER</p>
+          <p style="margin: 0 0 10px; font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-300);">
+            Any filter error blocks by default. URL query parameters are stripped, so search terms never reach
+            stored titles. Private and incognito window titles are always redacted, and password-manager
+            windows are blocked outright.
+          </p>
+          <p style="margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-400);">The filter only redacts or blocks. It never invents data.</p>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); padding: 20px;">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">WHAT STAYS LOCAL</p>
+          <p class="mono" style="margin: 0 0 10px; font-size: 12px; line-height: 1.9; color: var(--color-neutral-300);">
+            TELEMETRY &middot; SQLITE &middot; LOGS<br>CONFIG &middot; BEHAVIORAL STATE<br>INTERVENTION HISTORY<br>QUOTA LEDGER &middot; MEME ASSETS
+          </p>
+          <p style="margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-400);">
+            The daemon API binds to 127.0.0.1:8765 and CORS is restricted to loopback and browser extensions.
+            Hosted inference receives bounded, privacy-filtered evidence only.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="developers" style="background: #14161f;">
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">DEVELOPERS</p>
+      <h2 style="font-size: clamp(26px, 3.2vw, 36px); letter-spacing: -0.02em; margin: 0 0 14px; max-width: 26ch;">A daemon, a CLI, and a loopback API</h2>
+      <p style="color: var(--color-neutral-400); max-width: 58ch; margin: 0 0 clamp(28px, 4vw, 44px); text-wrap: pretty;">
+        Install the package, configure a provider, and run the daemon. Everything below is from the repository &mdash;
+        the API is local-only, so there is no hosted endpoint and no SDK to sign up for.
+      </p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 18px; align-items: start;">
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #171923; overflow: hidden;">
+          <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--color-neutral-800); font-size: 11px; color: var(--color-neutral-500);">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--color-neutral-700);"></span>
+            pipeline.py
+          </div>
+          <pre class="mono" style="margin: 0; padding: 18px 16px; overflow-x: auto; font-size: 11.5px; line-height: 1.85; color: var(--color-neutral-300);"><span style="color: var(--color-accent-300);">from</span> noema.application.pipeline <span style="color: var(--color-accent-300);">import</span> NoemaService
+<span style="color: var(--color-accent-300);">from</span> noema.infrastructure.database <span style="color: var(--color-accent-300);">import</span> SQLiteStore
+
+store = SQLiteStore(<span style="color: var(--color-accent-200);">"noema.db"</span>)
+service = NoemaService(adapter, store)
+
+service.ingest_telemetry(start=<span style="color: var(--color-accent-200);">"2026-09-04T09:00:00Z"</span>)
+service.sessionize_stored_events()
+service.build_meaningful_sessions()
+service.classify_stored_meaningful_sessions()</pre>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); background: #171923; overflow: hidden;">
+          <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--color-neutral-800); font-size: 11px; color: var(--color-neutral-500);">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--color-neutral-700);"></span>
+            powershell
+          </div>
+          <pre class="mono" style="margin: 0; padding: 18px 16px; overflow-x: auto; font-size: 11.5px; line-height: 1.85; color: var(--color-neutral-300);"><span style="color: var(--color-neutral-600);"># install and start the daemon</span>
+pip install .
+python -m noema
+
+<span style="color: var(--color-neutral-600);"># one pipeline cycle &middot; inspect telemetry</span>
+python -m noema --once
+python -m noema telemetry
+
+<span style="color: var(--color-neutral-600);"># deterministic benchmarks &middot; metrics</span>
+python -m noema benchmark full --mock
+python -m noema metrics summary
+
+<span style="color: var(--color-neutral-600);"># local meme dataset ingestion</span>
+python -m noema memes ingest --csv &lt;labels.csv&gt; --dir &lt;images&gt;
+python -m noema memes stats</pre>
+        </div>
+      </div>
+
+      <div style="margin-top: 18px; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); overflow: hidden;">
+        <div class="mono" style="padding: 14px 16px; border-bottom: 1px solid var(--color-neutral-800); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">
+          <span>LOCAL REST API</span><span>http://127.0.0.1:8765</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="table mono" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+              <tr>
+                <th scope="col" style="text-align: left; padding: 11px 16px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); font-weight: 400; border-bottom: 1px solid var(--color-divider);">ENDPOINT</th>
+                <th scope="col" style="text-align: left; padding: 11px 16px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600); font-weight: 400; border-bottom: 1px solid var(--color-divider);">RETURNS</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/daemon/health</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">daemon and worker health</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/meaningful-sessions</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">semantic episodes with evidence quality</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/classifications</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">stored classifications</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/classification/status</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">availability, local quota estimate</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/realtime/status</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">realtime detector state</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/presence/current</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">active / afk / unknown</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/interventions</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">intervention feed and details</td></tr>
+              <tr><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-200);">GET /api/outcomes</td><td style="padding: 10px 16px; border-bottom: 1px solid var(--color-divider); color: var(--color-neutral-500);">recovery and attribution</td></tr>
+              <tr><td style="padding: 10px 16px; color: var(--color-neutral-200);">GET /api/debug/quotas</td><td style="padding: 10px 16px; color: var(--color-neutral-500);">per-model rpm / rpd ledger</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="mono" style="margin: 14px 0 0; font-size: 11px; line-height: 1.7; letter-spacing: .06em; color: var(--color-neutral-600);">
+        TESTS: <span style="color: var(--color-neutral-300);">python -m pytest tests -q</span> &middot; CI RUNS WITHOUT HOSTED MODEL CREDENTIALS
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap section-pad">
+      <p class="mono eyebrow">STATUS &middot; WHAT IS BUILT, WHAT IS NOT</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; align-items: start;">
+        <div style="min-width: 0; border: 1px solid var(--color-accent-700); border-radius: var(--radius-md); padding: 20px; background: color-mix(in srgb, var(--color-accent) 6%, transparent);">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-accent-200);">IMPLEMENTED &middot; V3</p>
+          <ul style="margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--color-neutral-200);">
+            <li>Native Windows telemetry, presence and AFK</li>
+            <li>Sessionization and semantic episodes</li>
+            <li>Evidence quality and classification</li>
+            <li>Three-valued goal alignment</li>
+            <li>Realtime drift detection</li>
+            <li>Tiered model routing</li>
+            <li>Intervention reasoning and policy gate</li>
+            <li>Typed user actions and break mode</li>
+            <li>Outcome attribution and effectiveness</li>
+            <li>Meme Center, response library, local REST API</li>
+          </ul>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); padding: 20px;">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">FUTURE WORK &middot; V4 / V5 &middot; NOT IMPLEMENTED</p>
+          <ul style="margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--color-neutral-400);">
+            <li>Calendar integration, goal hierarchy, deadlines</li>
+            <li>Goal progress, implementation intentions, reminders</li>
+            <li>Longitudinal goal analytics</li>
+            <li>Personalized intervention prediction</li>
+            <li>Adaptive selection and behavioral forecasting</li>
+            <li>Learned response ranking</li>
+          </ul>
+        </div>
+        <div style="min-width: 0; border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); padding: 20px;">
+          <p class="mono" style="margin: 0 0 14px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">WHAT NOEMA DOES NOT CLAIM</p>
+          <ul style="margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--color-neutral-400);">
+            <li>To perfectly understand intent</li>
+            <li>To classify every activity correctly</li>
+            <li>To know whether an activity was intentional</li>
+            <li>To guarantee an intervention improves productivity</li>
+            <li>To provide a learned intervention policy</li>
+            <li>To predict long-term behavior reliably</li>
+          </ul>
+          <p style="margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-neutral-500);">
+            The system is designed to make these limitations explicit rather than hide them.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="background: linear-gradient(180deg, #14161f 0%, #1a1d2d 100%);">
+    <div class="wrap" style="padding-top: clamp(56px, 8vw, 110px); padding-bottom: clamp(56px, 8vw, 110px);
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(28px, 4vw, 56px); align-items: end;">
+      <div style="min-width: 0;">
+        <p class="mono" style="font-size: 11px; letter-spacing: .16em; color: var(--color-accent-300); margin: 0 0 18px;">OPEN SOURCE &middot; MPL-2.0</p>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); letter-spacing: -0.025em; margin: 0 0 16px; max-width: 20ch;">Read the architecture, then run it on your own machine</h2>
+        <p style="color: var(--color-neutral-400); max-width: 46ch; margin: 0 0 24px; text-wrap: pretty;">
+          Noema is an actively developed, research-oriented system. The repository carries the full
+          implementation, the architecture notes, the privacy policy and the test suite.
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <a class="btn btn-primary" href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener" style="padding: 10px 18px;">View the repository</a>
+          <a class="btn btn-secondary" href="https://github.com/Nithin031/Noema/tree/main/src/noema/docs" target="_blank" rel="noopener" style="padding: 10px 18px;">Read the documentation</a>
+          <a class="btn btn-secondary" href="https://github.com/Nithin031/Noema/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" style="padding: 10px 18px;">Contribute</a>
+        </div>
+      </div>
+      <div class="mono" style="min-width: 0; border-top: 1px solid var(--color-divider); padding-top: 20px;
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 18px;">
+        <div><p style="margin: 0 0 6px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">PACKAGE</p><p style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">noema 0.14.0</p></div>
+        <div><p style="margin: 0 0 6px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">LICENSE</p><p style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">MPL-2.0</p></div>
+        <div><p style="margin: 0 0 6px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">PLATFORM</p><p style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">Windows-native telemetry</p></div>
+        <div><p style="margin: 0 0 6px; font-size: 10px; letter-spacing: .14em; color: var(--color-neutral-600);">CITATION</p><p style="margin: 0; font-size: 13px; color: var(--color-neutral-200);">CITATION.cff</p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap mono" style="padding: 28px clamp(16px, 4vw, 32px) 44px;
+      display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; align-items: center;
+      font-size: 11px; letter-spacing: .1em;">
+      <span style="color: var(--color-neutral-600);">NOEMA &middot; PERSONAL BEHAVIORAL INTELLIGENCE &middot; LOCAL-FIRST</span>
+      <div style="display: flex; gap: 18px; flex-wrap: wrap;">
+        <a href="https://github.com/Nithin031/Noema" target="_blank" rel="noopener">GITHUB</a>
+        <a href="https://github.com/Nithin031/Noema/tree/main/src/noema/docs" target="_blank" rel="noopener">DOCS</a>
+        <a href="https://github.com/Nithin031/Noema/blob/main/PRIVACY.md" target="_blank" rel="noopener">PRIVACY</a>
+        <a href="https://github.com/Nithin031/Noema/blob/main/SECURITY.md" target="_blank" rel="noopener">SECURITY</a>
+        <a href="https://github.com/Nithin031/Noema/blob/main/LICENSE.txt" target="_blank" rel="noopener">LICENSE</a>
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script src="stages.js"></script>
+</body>
+</html>
