@@ -1449,24 +1449,28 @@ Future ML should be driven by the intervention/outcome data collected by the sys
 - `THIRD_PARTY_NOTICES.md` — third-party and dataset notices
 - `LICENSE.txt` — MPL-2.0 license
 - `CITATION.cff` — citation metadata
-- `site/` — static landing page (see [§41](#41-landing-page))
 
 ## 40. License
 
 Noema is licensed under the Mozilla Public License 2.0. See `LICENSE.txt`. Third-party notices are documented in `THIRD_PARTY_NOTICES.md`. If you use or refer to Noema in research, please cite it according to `CITATION.cff`.
 
-## 41. Landing page
+## 41. Dashboard UI
 
-A static, presentation-only landing page lives in `site/`: `index.html`, `tokens.css`, `site.css`, `stages.js`, `app-link.js`. No build step, no server component, no new runtime dependency.
+`src/noema/api/dashboard/` is the daemon's one bundled frontend, served at `/`, `/dashboard`, and `/dashboard/` (`GET /`, `NoemaApp._dispatch`). It replaced an earlier, purely illustrative landing page: that page's Nocturne visual design is now the live application shell, not a separate marketing site — there is exactly one shipped frontend, and it is wired to the real API below rather than to invented sample data.
 
-It does not mount on the daemon's own `/` route. It is meant to be published separately, for example to GitHub Pages, and served with any static file host:
+Files: `index.html`, `tokens.css` (design tokens), `site.css` (layout and motion), `stages.js` (the static "How Noema thinks" stage picker — architecture documentation, not live state), `app.js` (all live wiring). No build step, no framework, no new runtime dependency — the same dependency-free philosophy as the rest of the local API.
 
-```powershell
-python -m http.server -d site 8000
-```
+`app.js` polls same-origin endpoints every 30 seconds and on load:
 
-The page does not reimplement telemetry, classification, alignment, drift detection, intervention reasoning, Meme Center state, or outcomes. The daemon and the dashboard in `src/noema/api/dashboard/` remain the only real implementation of all of that; the landing page only composes copy from the domain contracts and documentation, and links out to it.
+- `GET /api/daemon/health` — hero status line and the Developers section's health panel.
+- `GET /api/classification/status` — the Models section's live classifier status, plus the `Run classification now` / `Stop local model` buttons (`POST /api/ai/run`, `POST /api/ollama/stop`).
+- `GET /api/meaningful-sessions`, `GET /api/behavior`, `GET /api/intents`, `GET /api/interventions/feed` — the four "What it actually does" cards (semantic episode, alignment/behavior, reasoning decision, delivered intervention).
+- `GET /api/events` — the live activity table.
+- `GET /api/responses/effectiveness` — the outcomes summary.
+- `GET /api/meme-assets/stats` — the Meme Center corpus counts.
+- `POST /api/intents` — the intent form.
+- `POST /api/interventions/{id}/action|break|feedback` — the three typed intervention buttons (`I'm locking in`, `Give me 5 min`, `This is intentional`), enabled only while a delivered intervention is actually open.
 
-A few CTAs point at the real local daemon, using its actual default address (`config/settings.py` `Settings.host` / `Settings.port`, `127.0.0.1:8765`): the dashboard root, its `#activities` and `#interventions` anchors, and `GET /api/daemon/health`. `site/app-link.js` probes `GET /health` (reading nothing back — it only checks whether something answers) to tell whether the daemon is reachable; when it is not, those links fall back to the install instructions in [§24](#24-installation) instead of navigating to a dead connection.
+Every one of those cards ships with the same illustrative example it always had, now labelled `EXAMPLE`; the first successful fetch with real rows replaces it and flips the label to `LIVE`. A failed or empty fetch (daemon not attached, empty database, source unavailable) leaves the example in place rather than fabricating data — this applies from a fresh install with zero events all the way up to a fully populated instance.
 
-There is no dedicated Meme Center route in `site/`, because none exists yet in the dashboard — only the REST endpoints under `/api/meme-assets` do. The landing page does not invent one.
+There is still no dedicated Meme Center *view* — the Meme Center section shows live corpus counts from `GET /api/meme-assets/stats` when a corpus is ingested, but browsing, tagging and favoriting only exist as REST endpoints under `/api/meme-assets/*` today; §37 and the status section on the page itself both say so rather than implying a UI that isn't there.

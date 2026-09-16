@@ -133,7 +133,33 @@ main > .hero-section { border-top: none; }
 .stage-kind { font-size: 10px; color: var(--color-neutral-600); }
 .stage-detail { position: sticky; top: 76px; }
 
-/* — real-app links (see app-link.js) — */
+/* — live daemon status (see app.js) — */
 .app-status { color: var(--color-neutral-600); transition: color 160ms ease; }
 .app-status.online { color: var(--color-accent-300); }
 .app-status.offline { color: var(--color-neutral-600); }
+
+/* — live vs. example data tags — */
+.data-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9px; letter-spacing: .12em; padding: 2px 8px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.data-tag.live { color: var(--color-accent-200); background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.data-tag.example { color: var(--color-neutral-500); border: 1px solid var(--color-neutral-800); }
+.data-tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+.muted { color: var(--color-neutral-500); }
+
+/* — intent form — */
+.intent-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.intent-form .input { flex: 1 1 220px; }
+
+/* — activity table — */
+.activity-table td, .activity-table th { white-space: nowrap; }
+.activity-table td:nth-child(2) { white-space: normal; }
+
+/* — action row (intervention buttons, run classification) — */
+.action-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.action-status { font-size: 11px; margin-top: 8px; min-height: 14px; }
+.action-status.ok { color: var(--color-accent-300); }
+.action-status.err { color: #e08a8a; }

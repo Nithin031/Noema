@@ -104,16 +104,34 @@ class NoemaApp:
         )
         return [body]
 
-    def _static_response(self, start_response: Callable, filename: str, content_type: str):
-        """Serve the bundled local dashboard without exposing filesystem paths."""
+    #: Files the bundled dashboard is allowed to serve, by extension. Kept as
+    #: an allowlist (rather than serving anything under the directory) so a
+    #: path-traversal attempt can never read arbitrary package files.
+    _DASHBOARD_ASSET_TYPES = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".svg": "image/svg+xml",
+    }
+
+    def _static_response(self, start_response: Callable, filename: str, content_type: str = ""):
+        """Serve one bundled dashboard asset without exposing filesystem paths."""
         dashboard_dir = Path(__file__).resolve().parent / "dashboard"
-        allowed = {"index.html": "text/html; charset=utf-8", "dashboard.css": "text/css; charset=utf-8", "dashboard.js": "application/javascript; charset=utf-8"}
-        if filename not in allowed:
+        suffix = Path(filename).suffix.lower()
+        resolved_type = content_type or self._DASHBOARD_ASSET_TYPES.get(suffix)
+        if "/" in filename or filename.startswith(".") or resolved_type is None:
             return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
-        body = (dashboard_dir / filename).read_bytes()
+        candidate = (dashboard_dir / filename).resolve()
+        try:
+            candidate.relative_to(dashboard_dir.resolve())
+        except ValueError:
+            return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        if not candidate.is_file():
+            return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        body = candidate.read_bytes()
         start_response(
             "200 OK",
-            [("Content-Type", content_type), ("Content-Length", str(len(body))),
+            [("Content-Type", resolved_type), ("Content-Length", str(len(body))),
              ("Cache-Control", "no-store"),
              ("Access-Control-Allow-Origin", self._cors_origin()),
              ("Vary", "Origin")],
@@ -523,11 +541,11 @@ class NoemaApp:
                     return frontend
 
             if method == "GET" and path in {"/", "/dashboard", "/dashboard/"}:
-                return self._static_response(start_response, "index.html", "text/html; charset=utf-8")
-            if method == "GET" and path == "/dashboard.css":
-                return self._static_response(start_response, "dashboard.css", "text/css; charset=utf-8")
-            if method == "GET" and path == "/dashboard.js":
-                return self._static_response(start_response, "dashboard.js", "application/javascript; charset=utf-8")
+                return self._static_response(start_response, "index.html")
+            if method == "GET" and path in {
+                "/tokens.css", "/site.css", "/stages.js", "/app.js",
+            }:
+                return self._static_response(start_response, path.lstrip("/"))
 
             if method == "GET" and path == "/health":
                 return self._response(start_response, HTTPStatus.OK, {"status": "ok"})
