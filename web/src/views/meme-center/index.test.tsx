@@ -11,7 +11,7 @@ const ASSETS = [
   },
   {
     id: 'bbb', filename: 'image_2.png', ocr_text: 'REST NOW', corrected_text: 'Rest now',
-    display_text: 'Rest now', sentiment: 'neutral', tags: [], favorite: false, enabled: true,
+    display_text: 'Rest now', sentiment: 'neutral', tags: [], favorite: false, enabled: false,
     width: 32, height: 24, byte_size: 500, image_format: 'png', response_count: 0, curated: false,
     responses: [],
   },
@@ -81,6 +81,7 @@ function baseRoutes(url: string, init?: RequestInit) {
   }
   if (url.includes('/api/meme-assets/aaa/favorite')) return { asset: { ...ASSETS[0], favorite: true } };
   if (url.includes('/api/meme-assets/aaa') && !url.includes('/responses')) return { asset: ASSETS[0] };
+  if (url.includes('/api/meme-assets/bbb') && !url.includes('/responses')) return { asset: ASSETS[1] };
   if (url.includes('/api/meme-assets') && method === 'GET') {
     const params = new URLSearchParams(url.split('?')[1] ?? '');
     const q = (params.get('q') ?? '').toLowerCase();
@@ -112,14 +113,53 @@ describe('MemeCenterPage', () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
     expect(await screen.findByText('Meme Center')).toBeInTheDocument();
-    expect(await screen.findByText('image_1.jpg', { exact: false })).toBeInTheDocument();
+    expect(await screen.findByText('Study hard', { exact: false })).toBeInTheDocument();
     expect(screen.getByLabelText('2 assets')).toBeInTheDocument();
+  });
+
+  it('renders real thumbnail URLs and an image-first grid', async () => {
+    mockFetch(baseRoutes);
+    render(<MemeCenterPage />);
+    const image = await screen.findByAltText('Study hard') as HTMLImageElement;
+    expect(image.src).toContain('/api/meme-assets/aaa/thumb');
+    expect(image.getAttribute('loading')).toBe('lazy');
+    // Disabled assets still show their image, marked but visible.
+    const disabledCard = screen.getByAltText('Rest now').closest('article');
+    if (!disabledCard) throw new Error('card missing');
+    expect(within(disabledCard).getByText('DISABLED')).toBeInTheDocument();
+    expect(screen.getByAltText('Rest now')).toBeInTheDocument();
+  });
+
+  it('shows skeleton cards while the collection loads', async () => {
+    mockFetch(baseRoutes);
+    render(<MemeCenterPage />);
+    expect(screen.getByLabelText('Loading collection')).toBeInTheDocument();
+    expect(await screen.findByText('Study hard', { exact: false })).toBeInTheDocument();
+  });
+
+  it('marks the local library available without any API-key gate', async () => {
+    mockFetch(baseRoutes);
+    render(<MemeCenterPage />);
+    expect(await screen.findByText('Study hard', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/LOCAL LIBRARY/)).toBeInTheDocument();
+    expect(screen.getByText(/AVAILABLE/)).toBeInTheDocument();
+    expect(screen.queryByText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  it('isolates a single broken image without blanking the collection', async () => {
+    mockFetch(baseRoutes);
+    render(<MemeCenterPage />);
+    const image = await screen.findByAltText('Study hard');
+    fireEvent.error(image);
+    expect(await screen.findByText('Image unavailable')).toBeInTheDocument();
+    // The rest of the collection keeps rendering.
+    expect(screen.getByAltText('Rest now')).toBeInTheDocument();
   });
 
   it('searches by OCR text', async () => {
     const spy = mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    await screen.findByText('image_1.jpg', { exact: false });
+    await screen.findByText('Study hard', { exact: false });
     fireEvent.change(screen.getByLabelText(/search assets/i), { target: { value: 'rest' } });
     await waitFor(() => {
       const calls = spy.mock.calls.map((c) => String(c[0]));
@@ -130,16 +170,16 @@ describe('MemeCenterPage', () => {
   it('filters by sentiment', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    await screen.findByText('image_1.jpg', { exact: false });
+    await screen.findByText('Study hard', { exact: false });
     fireEvent.click(screen.getByRole('button', { name: 'NEUTRAL' }));
-    await waitFor(() => expect(screen.queryByText('image_1.jpg', { exact: false })).not.toBeInTheDocument());
-    expect(screen.getByText('image_2.png', { exact: false })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Study hard', { exact: false })).not.toBeInTheDocument());
+    expect(screen.getByText('Rest now', { exact: false })).toBeInTheDocument();
   });
 
   it('toggles favorite with rollback surface on success', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_1.jpg', { exact: false })).closest('article');
+    const card = (await screen.findByText('Study hard', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
     fireEvent.click(within(card).getByLabelText(/favorite image_1/i));
     await waitFor(() => expect(within(card).getByLabelText(/unfavorite/i)).toBeInTheDocument());
@@ -148,7 +188,7 @@ describe('MemeCenterPage', () => {
   it('opens the detail panel with metadata and responses', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_1.jpg', { exact: false })).closest('article');
+    const card = (await screen.findByText('Study hard', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
     fireEvent.click(card);
     const dialog = await screen.findByRole('dialog', { name: /asset image_1/i });
@@ -158,12 +198,14 @@ describe('MemeCenterPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
-  it('opens the response editor from a card', async () => {
+  it('opens the response editor from the inspector', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_2.png', { exact: false })).closest('article');
+    const card = (await screen.findByText('Rest now', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
-    fireEvent.click(within(card).getByText('+ Response'));
+    fireEvent.click(card);
+    const dialog = await screen.findByRole('dialog', { name: /asset image_2/i });
+    fireEvent.click(within(dialog).getByText('Create response'));
     expect(await screen.findByRole('dialog', { name: /create response/i })).toBeInTheDocument();
     expect(screen.getByText(/preview · sample context/i)).toBeInTheDocument();
   });
@@ -180,7 +222,7 @@ describe('MemeCenterPage', () => {
   it('clears the search from the toolbar', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    await screen.findByText('image_1.jpg', { exact: false });
+    await screen.findByText('Study hard', { exact: false });
     const input = screen.getByLabelText(/search assets/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'study' } });
     expect(await screen.findByLabelText('Clear search')).toBeInTheDocument();
@@ -191,7 +233,7 @@ describe('MemeCenterPage', () => {
   it('shows linked responses and recent intervention use in the detail panel', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_1.jpg', { exact: false })).closest('article');
+    const card = (await screen.findByText('Study hard', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
     fireEvent.click(card);
     const dialog = await screen.findByRole('dialog', { name: /asset image_1/i });
@@ -205,7 +247,7 @@ describe('MemeCenterPage', () => {
   it('toggles asset enabled state from the detail panel', async () => {
     const spy = mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_1.jpg', { exact: false })).closest('article');
+    const card = (await screen.findByText('Study hard', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
     fireEvent.click(card);
     const dialog = await screen.findByRole('dialog', { name: /asset image_1/i });
@@ -221,7 +263,7 @@ describe('MemeCenterPage', () => {
   it('saves asset tags from the detail panel', async () => {
     mockFetch(baseRoutes);
     render(<MemeCenterPage />);
-    const card = (await screen.findByText('image_1.jpg', { exact: false })).closest('article');
+    const card = (await screen.findByText('Study hard', { exact: false })).closest('article');
     if (!card) throw new Error('card missing');
     fireEvent.click(card);
     const dialog = await screen.findByRole('dialog', { name: /asset image_1/i });
@@ -250,11 +292,15 @@ describe('MemeCenterPage', () => {
     expect(await screen.findByText(/run ingestion first/i)).toBeInTheDocument();
   });
 
-  it('surfaces backend errors with dismiss', async () => {
-    mockFetch(() => { throw new Error('daemon down'); });
+  it('shows a retryable library error when the backend is down', async () => {
+    const spy = mockFetch(() => { throw new Error('daemon down'); });
     render(<MemeCenterPage />);
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('dismiss'));
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(await screen.findByText("Couldn't load the local asset library.")).toBeInTheDocument();
+    // No fake empty state and no AI-key messaging for a local API failure.
+    expect(screen.queryByText(/no assets yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/api key/i)).not.toBeInTheDocument();
+    const callsBefore = spy.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(spy.mock.calls.length).toBeGreaterThan(callsBefore));
   });
 });

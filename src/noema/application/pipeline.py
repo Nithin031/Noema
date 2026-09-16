@@ -3332,7 +3332,20 @@ class NoemaService:
     # -- V3 Phase 10: Meme Center asset catalog --------------------------
     # Assets live in the local dataset directory (never in git, never in
     # behavioral tables). Directories resolve in order: explicit argument,
-    # service attribute (wired from daemon config), environment variable.
+    # service attribute (wired from daemon config), environment variable,
+    # then the locations recorded by the last successful dataset ingest
+    # (so a supported ingest makes image bytes resolvable with no extra
+    # configuration; explicit configuration always wins).
+
+    MEME_DATASET_DIR_STATE_KEY = "meme.dataset_dir"
+    MEME_THUMBS_DIR_STATE_KEY = "meme.thumbs_dir"
+
+    def _persisted_dir(self, key: str) -> str:
+        try:
+            value = self.store.get_state(key)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return ""
+        return str(value or "").strip()
 
     def meme_dataset_dir(self, override: Optional[str] = None) -> str:
         import os as _os
@@ -3341,6 +3354,7 @@ class NoemaService:
             override,
             getattr(self, "_meme_dataset_dir", None),
             _os.environ.get("NOEMA_MEME_DATASET_DIR"),
+            self._persisted_dir(self.MEME_DATASET_DIR_STATE_KEY),
         ):
             if candidate and str(candidate).strip():
                 return str(candidate)
@@ -3353,6 +3367,7 @@ class NoemaService:
             override,
             getattr(self, "_meme_thumbs_dir", None),
             _os.environ.get("NOEMA_MEME_THUMBS_DIR"),
+            self._persisted_dir(self.MEME_THUMBS_DIR_STATE_KEY),
         ):
             if candidate and str(candidate).strip():
                 return str(candidate)
@@ -3413,7 +3428,13 @@ class NoemaService:
     def ingest_meme_dataset(self, csv_path: str, images_dir: str,
                             thumbs_dir: Optional[str] = None,
                             make_thumbs: bool = True) -> dict:
-        """Index a local meme corpus into the asset catalog (idempotent)."""
+        """Index a local meme corpus into the asset catalog (idempotent).
+
+        On success the resolved dataset/thumbnail directories are recorded
+        in daemon state so image bytes resolve without extra configuration.
+        """
+        import os as _os
+
         from noema.application.meme_assets import default_thumbs_dir, ingest_dataset
 
         resolved_thumbs = thumbs_dir or self.meme_thumbs_dir() or default_thumbs_dir(
@@ -3423,6 +3444,16 @@ class NoemaService:
                 csv_path, images_dir, self.store,
                 thumbs_dir=resolved_thumbs if make_thumbs else None,
                 make_thumbs=make_thumbs)
+        try:
+            self.store.set_state(
+                self.MEME_DATASET_DIR_STATE_KEY,
+                _os.path.abspath(str(images_dir)))
+            if make_thumbs and resolved_thumbs:
+                self.store.set_state(
+                    self.MEME_THUMBS_DIR_STATE_KEY,
+                    _os.path.abspath(str(resolved_thumbs)))
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
         return stats
 
     def meme_asset_image_path(self, asset_id: str, thumb: bool = False) -> Optional[str]:

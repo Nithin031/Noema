@@ -96,6 +96,8 @@ function AssetDetail({
   onTagsDraft,
   tagsBusy,
   onSaveTags,
+  imgBroken,
+  onImgBroken,
   onToggleEnabled,
   onToggleFavorite,
   onCreateResponse,
@@ -108,6 +110,8 @@ function AssetDetail({
   onTagsDraft: (value: string) => void;
   tagsBusy: boolean;
   onSaveTags: () => void;
+  imgBroken: boolean;
+  onImgBroken: () => void;
   onToggleEnabled: (id: string, next: boolean) => void;
   onToggleFavorite: (id: string, next: boolean) => void;
   onCreateResponse: (assetId: string) => void;
@@ -119,17 +123,28 @@ function AssetDetail({
     .slice(0, 3);
   return (
     <div className="mc-detail">
-      <div>
-        <img
-          className="mc-large"
-          src={memeAssetImageUrl(detail.id, false)}
-          alt={truncate(detail.display_text, 200) || detail.filename || 'Meme asset full preview'}
-        />
+      <div className="mc-hero">
+        {imgBroken ? (
+          <div className="mc-unavailable large" role="img" aria-label={`Image unavailable for ${detail.filename}`}>
+            <span>Image unavailable</span>
+            <small>{detail.filename}</small>
+          </div>
+        ) : (
+          <img
+            className="mc-large"
+            src={memeAssetImageUrl(detail.id, false)}
+            alt={truncate(detail.display_text, 200) || detail.filename || 'Meme asset full preview'}
+            onError={onImgBroken}
+          />
+        )}
+        <div className="mc-hero-cap">
+          <strong>{detail.display_text ? truncate(detail.display_text, 90) : detail.filename}</strong>
+          <span>{detail.enabled ? 'Active' : 'Disabled — kept for history, excluded from selection'}</span>
+        </div>
       </div>
       <div>
         <dl className="mc-kv">
           <dt>Filename</dt><dd>{detail.filename}</dd>
-          <dt>Status</dt><dd>{detail.enabled ? 'Active' : 'Disabled — kept for history, excluded from selection'}</dd>
           <dt>Source</dt><dd>{detail.source} · {detail.source_ref}</dd>
           <dt>Sentiment</dt><dd>{sentimentLabel(detail.sentiment)} <small>(dataset metadata — not a suitability verdict)</small></dd>
           <dt>OCR</dt><dd>{truncate(detail.ocr_text, 400) || '—'}</dd>
@@ -217,6 +232,8 @@ export default function MemeCenterPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [broken, setBroken] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<MemeAsset | null>(null);
@@ -230,6 +247,15 @@ export default function MemeCenterPage() {
   const [dropOver, setDropOver] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0);
+
+  const markBroken = useCallback((id: string) => {
+    setBroken((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   const loadPage = useCallback(async (reset: boolean) => {
     const offset = reset ? 0 : offsetRef.current;
@@ -247,8 +273,10 @@ export default function MemeCenterPage() {
       offsetRef.current = offset + page.items.length;
       setAssets((prev) => (reset ? page.items : [...prev, ...page.items]));
       setTotal(page.total);
+      if (reset) setLoadFailed(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load assets');
+      if (offset === 0) setLoadFailed(true);
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -460,13 +488,20 @@ export default function MemeCenterPage() {
     .sort((a, b) => (b.recovery_rate ?? 0) - (a.recovery_rate ?? 0))
     .slice(0, 5);
 
+  const libraryDown = !loading && loadFailed && assets.length === 0;
+
   return (
     <div className="mc-shell">
       <div className="mc-head">
         <div className="mc-title">
           <div className="kicker">NOEMA / INTERVENTION COLLECTION</div>
           <h2>Meme Center</h2>
-          <p>Your curated intervention collection — assets are images, responses are what Noema may show.</p>
+          <p>Curated responses Noema can use when it decides an intervention is warranted.</p>
+          <p className="mc-lib">
+            <span className={`mc-lib-dot${libraryDown ? ' down' : ''}`} aria-hidden="true" />
+            LOCAL LIBRARY {libraryDown ? '○ UNAVAILABLE' : '● AVAILABLE'}
+            <span> · browsing needs no AI key</span>
+          </p>
         </div>
         <div className="mc-counts" aria-label="Collection totals">
           <span className="mc-count"><b>{stats?.assets ?? '—'}</b>assets</span>
@@ -481,7 +516,7 @@ export default function MemeCenterPage() {
         <button role="tab" aria-selected={tab === 'responses'} className={tab === 'responses' ? 'active' : ''} onClick={() => setTab('responses')}>Responses</button>
       </div>
 
-      {error && <div className="mc-error" role="alert">{error} <button className="mc-icon-btn" onClick={() => setError('')}>dismiss</button></div>}
+      {error && <div className="mc-error" role="alert">{error} <button className="mc-icon-btn" onClick={() => void loadPage(true)}>retry</button><button className="mc-icon-btn" onClick={() => setError('')}>dismiss</button></div>}
       {notice && <div className="mc-notice">{notice} <button className="mc-icon-btn" onClick={() => setNotice('')}>dismiss</button></div>}
 
       {tab === 'assets' && (
@@ -548,21 +583,38 @@ export default function MemeCenterPage() {
             </div>
           )}
 
-          {loading ? (
-            <div className="mc-empty">Loading your collection…</div>
+          {loading && assets.length === 0 ? (
+            <div className="mc-grid" aria-label="Loading collection" aria-busy="true">
+              {Array.from({ length: 12 }, (_, index) => (
+                <div className="mc-card mc-skel" key={index} aria-hidden="true">
+                  <div className="mc-skel-img" />
+                  <div className="mc-skel-lines"><i /><i /></div>
+                </div>
+              ))}
+            </div>
+          ) : loadFailed && assets.length === 0 ? (
+            <div className="mc-empty" role="alert">
+              Couldn't load the local asset library.
+              <div className="mc-modal-actions" style={{ justifyContent: 'center' }}>
+                <button className="mc-btn" onClick={() => void loadPage(true)}>Retry</button>
+              </div>
+            </div>
           ) : assets.length === 0 ? (
             <div className="mc-empty">
-              No assets match. {total === 0 ? 'Run ingestion first: python -m noema memes ingest --csv labels.csv --dir images' : 'Try a different search or filter.'}
+              No assets yet. {total === 0 ? 'Run ingestion first: python -m noema memes ingest --csv labels.csv --dir images' : 'Try a different search or filter.'}
             </div>
           ) : (
             <div className="mc-grid" aria-label={`${total} assets`}>
-              {assets.map((asset) => (
+              {assets.map((asset) => {
+                const title = asset.display_text ? truncate(asset.display_text, 70) : asset.filename;
+                const imgBroken = broken.has(asset.id);
+                return (
                 <article
                   key={asset.id}
-                  className={`mc-card${selected.has(asset.id) ? ' selected' : ''}`}
+                  className={`mc-card${selected.has(asset.id) ? ' selected' : ''}${asset.enabled ? '' : ' is-disabled'}`}
                   tabIndex={0}
                   role="button"
-                  aria-label={`${asset.filename}${asset.display_text ? `, ${truncate(asset.display_text, 60)}` : ''}`}
+                  aria-label={`${title}${asset.enabled ? '' : ', disabled'}`}
                   aria-pressed={selected.has(asset.id)}
                   draggable
                   onDragStart={(e) => e.dataTransfer.setData('text/meme-asset-id', asset.id)}
@@ -579,42 +631,44 @@ export default function MemeCenterPage() {
                         aria-label={`Select ${asset.filename}`}
                       />
                     </label>
+                    <button
+                      className={`mc-fav${asset.favorite ? ' on' : ''}`}
+                      aria-label={asset.favorite ? `Unfavorite ${asset.filename}` : `Favorite ${asset.filename}`}
+                      aria-pressed={!!asset.favorite}
+                      onClick={(e) => { e.stopPropagation(); void toggleFavorite(asset.id, !asset.favorite); }}
+                    >
+                      <Heart size={14} aria-hidden="true" />
+                    </button>
                     <div className="mc-thumb">
-                      <img
-                        src={memeAssetImageUrl(asset.id, true)}
-                        alt={truncate(asset.display_text, 120) || asset.filename || 'Meme asset'}
-                        loading="lazy"
-                        draggable={false}
-                      />
+                      {imgBroken ? (
+                        <div className="mc-unavailable" role="img" aria-label={`Image unavailable for ${asset.filename}`}>
+                          <span>Image unavailable</span>
+                          <small>{asset.filename}</small>
+                        </div>
+                      ) : (
+                        <img
+                          src={memeAssetImageUrl(asset.id, true)}
+                          alt={title || 'Meme asset'}
+                          loading="lazy"
+                          draggable={false}
+                          onError={() => markBroken(asset.id)}
+                        />
+                      )}
                     </div>
+                    {!asset.enabled && <span className="mc-disabled-tag">DISABLED</span>}
                   </div>
-                  <div className="mc-card-body">
-                    <div className="mc-meta"><span title={asset.filename}>{asset.filename}</span></div>
-                    {asset.display_text && <div className="mc-ocr">“{truncate(asset.display_text, 80)}”</div>}
-                    <div className="mc-meta">
-                      {asset.sentiment && <span className={`mc-badge sent-${asset.sentiment}`}>{sentimentLabel(asset.sentiment)}</span>}
-                      {(asset.response_count ?? 0) > 0 && <span className="mc-badge curated">USED ×{asset.response_count}</span>}
-                      {!asset.enabled && <span className="mc-badge disabled">DISABLED</span>}
-                    </div>
-                    <div className="mc-card-actions">
-                      <button
-                        className={`mc-icon-btn${asset.favorite ? ' on' : ''}`}
-                        aria-label={asset.favorite ? `Unfavorite ${asset.filename}` : `Favorite ${asset.filename}`}
-                        aria-pressed={!!asset.favorite}
-                        onClick={(e) => { e.stopPropagation(); void toggleFavorite(asset.id, !asset.favorite); }}
-                      >
-                        <Heart size={13} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="mc-btn"
-                        onClick={(e) => { e.stopPropagation(); setEditor(emptyEditor(asset.id)); }}
-                      >
-                        + Response
-                      </button>
+                  <div className="mc-card-body" title={asset.filename}>
+                    <div className="mc-ocr">{title ? `“${title}”` : asset.filename}</div>
+                    <div className="mc-micro">
+                      {(asset.response_count ?? 0) > 0 && <span>USED ×{asset.response_count}</span>}
+                      {(asset.tags || []).slice(0, 2).map((tag) => (
+                        <span key={tag}>#{tag}</span>
+                      ))}
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
           <div ref={sentinelRef} className="mc-sentinel" aria-hidden="true" />
@@ -738,6 +792,8 @@ export default function MemeCenterPage() {
               onTagsDraft={setTagsDraft}
               tagsBusy={tagsBusy}
               onSaveTags={() => void saveAssetTags()}
+              imgBroken={broken.has(detail.id)}
+              onImgBroken={() => markBroken(detail.id)}
               onToggleEnabled={(id, next) => void toggleAssetEnabled(id, next)}
               onToggleFavorite={(id, next) => void toggleFavorite(id, next)}
               onCreateResponse={(assetId) => { setDetail(null); setEditor(emptyEditor(assetId)); }}
