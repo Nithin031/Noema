@@ -1,0 +1,26 @@
+body { min-width: 360px; max-width: 420px; margin: 0; color: #e2e8f0; background: #0f172a; font: 13px system-ui, sans-serif; }
+main { padding: 16px; }
+h1 { margin: 0 0 6px; font-size: 18px; }
+h2 { margin: 16px 0 8px; color: #cbd5e1; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+p { margin: 0 0 14px; color: #93c5fd; }
+section { border-top: 1px solid #1e293b; padding-top: 1px; }
+dl { display: grid; grid-template-columns: 105px 1fr; gap: 7px 10px; margin: 0 0 8px; }
+dt { color: #94a3b8; } dd { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
+.status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; border-top: 0; }
+.status-grid div, .metrics div { min-width: 0; border-radius: 7px; padding: 8px; background: #1e293b; }
+.status-grid span, .metrics span { display: block; color: #94a3b8; font-size: 11px; }
+.status-grid strong { display: block; overflow: hidden; margin-top: 3px; text-overflow: ellipsis; white-space: nowrap; color: #bfdbfe; font-size: 12px; }
+.current { margin-top: 1px; }
+.tab-category { display: grid; gap: 3px; margin: 8px 0; padding: 9px; border-left: 3px solid #fbbf24; border-radius: 5px; background: #172554; }
+.tab-category strong { color: #fbbf24; font-size: 16px; text-transform: capitalize; }
+.tab-category span { color: #bfdbfe; font-size: 11px; }
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.metrics strong { display: block; margin-bottom: 2px; color: #fbbf24; font-size: 16px; }
+.timeline { max-height: 120px; overflow-y: auto; margin: 0; padding: 0 0 0 22px; color: #cbd5e1; }
+.timeline li { margin: 0 0 5px; padding-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.updated { margin: 14px 0 8px; color: #64748b; font-size: 11px; }
+button { width: 100%; border: 0; border-radius: 8px; padding: 9px; color: #0f172a; background: #fbbf24; cursor: pointer; font-weight: 700; }
+button:hover { background: #fcd34d; }
+button:disabled { cursor: wait; opacity: .65; }
+button.secondary { margin-top: 2px; color: #dbeafe; background: #1d4ed8; }
+button.secondary:hover { background: #2563eb; }

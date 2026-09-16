@@ -1254,11 +1254,17 @@ tests/
 ├── integration/
 ├── providers/
 └── realtime/
+
+web/                      # React frontend + browser extension (see §33)
+├── src/                  # dashboard views, Meme Center, API client
+├── extension/            # Firefox extension client
+├── package.json          # npm scripts: lint, build, test
+└── ...                   # Vite + TypeScript tooling
 ```
 
 ## 33. Frontend and extension distribution
 
-The repository's shipped Python package includes the daemon and bundled static dashboard. The richer React frontend and browser extension are maintained in the local frontend workspace. The frontend workspace may contain:
+The repository ships the daemon, the bundled static dashboard, and the React frontend source under `web/`. The frontend workspace contains:
 
 ```text
 web/
@@ -1268,7 +1274,7 @@ web/
 └── development tooling
 ```
 
-The frontend workspace is currently not part of the distributed Python package. If a built `web/dist/` exists locally, the daemon can use it according to the existing dashboard-serving behavior.
+Build it with `npm run build` inside `web/` (requires Node + npm). `web/dist/` and `web/node_modules/` are gitignored build artifacts. If a built `web/dist/` exists locally, the daemon serves it at `http://127.0.0.1:8765/`; otherwise it falls back to the bundled static dashboard in `src/noema/api/dashboard/`.
 
 The daemon-side browser bridge is part of Noema. The browser extension client itself is not distributed as part of the Python package.
 

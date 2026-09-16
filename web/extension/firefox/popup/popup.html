@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Noema</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>Noema</h1>
+      <p id="connection">Connecting...</p>
+      <section class="status-grid" aria-label="System status">
+        <div><span>Daemon</span><strong id="daemon">—</strong></div>
+        <div><span>Collector</span><strong id="ingest">—</strong></div>
+        <div><span>Provider</span><strong id="provider">—</strong></div>
+      </section>
+      <section class="current" aria-label="Current browser state">
+        <h2>Current browser state</h2>
+        <dl>
+          <dt>Current tab</dt><dd id="tab">—</dd>
+          <dt>Device</dt><dd id="device">—</dd>
+          <dt>Queued</dt><dd id="queued">0</dd>
+        </dl>
+        <div class="tab-category">
+          <strong id="tab-category">Uncategorized</strong>
+          <span id="tab-type">Activity type: —</span>
+          <span id="tab-productivity">Productivity: —</span>
+          <span id="tab-topic">Topic: —</span>
+        </div>
+        <button id="categorize" class="secondary">Categorize current tab</button>
+      </section>
+      <section aria-label="Activity overview">
+        <h2>Activity overview</h2>
+        <div class="metrics">
+          <div><strong id="events">—</strong><span>Events</span></div>
+          <div><strong id="sessions">—</strong><span>Sessions</span></div>
+          <div><strong id="meaningful">—</strong><span>Meaningful</span></div>
+          <div><strong id="classifications">—</strong><span>Labels</span></div>
+          <div><strong id="behavior">—</strong><span>Behavior</span></div>
+          <div><strong id="interventions">—</strong><span>Actions</span></div>
+          <div><strong id="outcomes">—</strong><span>Outcomes</span></div>
+          <div><strong id="memories">—</strong><span>Memories</span></div>
+        </div>
+      </section>
+      <section aria-label="Intelligence summary">
+        <h2>Intelligence summary</h2>
+        <dl>
+          <dt>Latest behavior</dt><dd id="behavior-detail">—</dd>
+          <dt>Latest label</dt><dd id="classification-detail">—</dd>
+          <dt>Latest action</dt><dd id="intervention-detail">—</dd>
+          <dt>Latest outcome</dt><dd id="outcome-detail">—</dd>
+          <dt>Focus profile</dt><dd id="personalization">—</dd>
+        </dl>
+      </section>
+      <section aria-label="Recent timeline">
+        <h2>Recent timeline</h2>
+        <ol id="timeline" class="timeline"><li>Loading...</li></ol>
+      </section>
+      <p id="updated" class="updated">Not refreshed yet</p>
+      <button id="refresh">Refresh</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
