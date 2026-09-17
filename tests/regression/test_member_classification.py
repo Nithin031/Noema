@@ -17,6 +17,7 @@ session_id echo. This pins:
 from datetime import timedelta
 
 from noema.api import NoemaService
+from noema.classification import queue as classification_queue
 from noema.classification.core import Classification, Classifier
 from noema.domain.activity import ActivityEvent
 from noema.domain.meaningful import MeaningfulSession
@@ -210,7 +211,7 @@ def test_member_evidence_carries_episode_envelope():
     store = SQLiteStore()
     try:
         episode, raws = _seed_episode(store, _service(FakeMemberChain())[1], [("Firefox", "Alpha work", "s-a")], key="a")
-        context = NoemaService._member_context(episode, raws[0], raws)
+        context = classification_queue.member_context(episode, raws[0], raws)
         evidence = Classifier.build_evidence(raws[0], context)
         assert evidence["session_type"] == "activity"
         assert evidence["app"] == "Firefox"
@@ -244,7 +245,7 @@ def test_expansion_bounded_per_episode_with_convergence():
         episode, raws = _seed_episode(store, service, specs, key="cap")
         service.classify_meaningful_sessions([episode])
         # Episode + cap members in this call, never more.
-        assert len(chain.batched_ids) == 1 + NoemaService.MAX_MEMBER_ITEMS_PER_EPISODE
+        assert len(chain.batched_ids) == 1 + classification_queue.MAX_MEMBER_ITEMS_PER_EPISODE
         # Remainder still needs work: the episode re-qualifies next cycle.
         pending = service.pending_classification_sessions([episode], now=None)
         assert [item.id for item in pending] == [episode.id]
@@ -313,10 +314,10 @@ def test_fortyfour_member_episode_converges_in_bounded_batches():
         episode, raws = _seed_episode(store, service, specs, key="h44")
         service.classify_meaningful_sessions([episode])
         assert chain.batch_calls == 1
-        assert len(chain.batched_ids) == 1 + NoemaService.MAX_MEMBER_ITEMS_PER_EPISODE
+        assert len(chain.batched_ids) == 1 + classification_queue.MAX_MEMBER_ITEMS_PER_EPISODE
         service.classify_meaningful_sessions([episode])
         assert chain.batch_calls == 2
-        assert len(chain.batched_ids) == 1 + 2 * NoemaService.MAX_MEMBER_ITEMS_PER_EPISODE
+        assert len(chain.batched_ids) == 1 + 2 * classification_queue.MAX_MEMBER_ITEMS_PER_EPISODE
         service.classify_meaningful_sessions([episode])
         assert chain.batch_calls == 3
         assert len(chain.batched_ids) == 1 + 44
@@ -347,13 +348,13 @@ def test_batch_composition_does_not_alter_cache_identity():
         assert chain.batch_calls == 1
         assert chain.single_calls == 0
         # Sealed member contexts do not depend on call order or grouping.
-        members_a = service._episode_members(ep_a)
-        members_b = service._episode_members(ep_b)
-        ctx_a_first = NoemaService._member_context(ep_a, members_a[0], members_a)
-        ctx_a_second = NoemaService._member_context(ep_a, members_a[0], members_a)
+        members_a = classification_queue.episode_members(service.store, ep_a)
+        members_b = classification_queue.episode_members(service.store, ep_b)
+        ctx_a_first = classification_queue.member_context(ep_a, members_a[0], members_a)
+        ctx_a_second = classification_queue.member_context(ep_a, members_a[0], members_a)
         assert ctx_a_first == ctx_a_second
         assert "Task b" not in str(ctx_a_first) and "Beta" not in str(ctx_a_first)
-        ctx_b = NoemaService._member_context(ep_b, members_b[0], members_b)
+        ctx_b = classification_queue.member_context(ep_b, members_b[0], members_b)
         assert "Task a" not in str(ctx_b) and "Alpha" not in str(ctx_b)
     finally:
         store.close()
