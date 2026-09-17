@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import atexit
-import hashlib
 import logging
 import os
 import signal
@@ -21,6 +20,13 @@ from noema.domain.activity import coerce_timestamp
 from noema.domain.behavior import BehaviorObservation, BehaviorState
 from noema.domain.intervention import InterventionStatus
 
+from noema.classification.scheduler import (
+    build_batch_id,
+    classification_window,
+    completed_window,
+    deduplicate_candidates,
+    select_chunk,
+)
 from noema.config.settings import DaemonConfig
 from noema.runtime.lock import SingleInstanceLock
 from noema.runtime.logging_utils import configure_logging, log_event
@@ -921,15 +927,11 @@ class NoemaDaemon:
                 last_analysis = coerce_timestamp(stored_last)
         except (AttributeError, OSError, TypeError, ValueError):
             last_analysis = None
-        start = last_analysis or (now - timedelta(seconds=self.config.classification_interval_seconds))
-        if start >= now:
-            start = now - timedelta(seconds=self.config.classification_interval_seconds)
-        end = now
-        completed_end = now.replace(second=0, microsecond=0) - timedelta(minutes=now.minute % 5)
-        completed_start = completed_end - timedelta(minutes=5)
-        batch_id = "batch_" + hashlib.sha256(
-            (completed_start.isoformat() + "|" + completed_end.isoformat()).encode("utf-8")
-        ).hexdigest()[:20]
+        start, end = classification_window(
+            last_analysis, now, self.config.classification_interval_seconds
+        )
+        completed_start, completed_end = completed_window(now)
+        batch_id = build_batch_id(completed_start, completed_end)
         self.service.store.upsert_classification_batch(
             batch_id, completed_start, completed_end, {
                 "start": _iso(start), "end": _iso(end),
@@ -979,20 +981,12 @@ class NoemaDaemon:
         # scheduler, the status endpoint, and manual runs share one source
         # of truth. Successfully classified rows under the current version
         # and terminally failed rows are never re-queued: no quota waste.
-        seen_ids: set = set()
-        candidates = []
-        for candidate in sorted(sessions, key=lambda item: item.start_time):
-            if candidate.id not in seen_ids:
-                seen_ids.add(candidate.id)
-                candidates.append(candidate)
+        # Candidate merge order/bounding lives in classification.scheduler.
         try:
             older_sessions = self.service.store.query_meaningful_sessions(limit=100000)
         except (AttributeError, OSError, TypeError, ValueError):
             older_sessions = []
-        for candidate in sorted(older_sessions, key=lambda item: item.start_time):
-            if candidate.id not in seen_ids:
-                seen_ids.add(candidate.id)
-                candidates.append(candidate)
+        candidates = deduplicate_candidates(sessions, older_sessions)
         pending = self.service.pending_classification_sessions(
             candidates,
             now=now,
@@ -1005,10 +999,8 @@ class NoemaDaemon:
         # backlog can never wedge the worker into an hours-long run: fresh
         # activity classifies quickly in the UI while older remainder
         # continues next cadence. Individual failures keep retryable state
-        # and never abort the chunk.
-        pending.sort(key=lambda item: item.start_time, reverse=True)
-        max_per_run = max(1, int(self.config.classification_max_per_run))
-        chunk = pending[:max_per_run]
+        # and never abort the chunk. Ordering/bounding: classification.scheduler.
+        chunk = select_chunk(pending, self.config.classification_max_per_run)
         log_event(
             self.logger, logging.INFO, "classification_cycle_started",
             pending=total_pending, chunk=len(chunk),
