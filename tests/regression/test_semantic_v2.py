@@ -15,6 +15,7 @@ alignment layer:
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import noema.application.classification as classification_mod
 from noema.application.classification import Classification, Classifier
@@ -29,6 +30,7 @@ from noema.domain.intent import (
     RELEVANCE_NONE,
     RELEVANCE_UNKNOWN,
 )
+from noema.domain.activity import ActivityEvent
 from noema.domain.sessions import ActivitySession
 from noema.domain.meaningful import MeaningfulSession
 from noema.domain.meaningful.models import EvidenceQuality
@@ -358,4 +360,175 @@ def test_raw_fanout_preserves_episode_lineage_not_independent_judgments():
         assert r["productivity"] == "productive"
     # The four raw rows share one and only one underlying verdict.
     assert len({r["inherited_from"] for r in raw_rows}) == 1
+    store.close()
+
+
+# --- daily_summary timeline provenance --------------------------------------
+# The "Today's Activity" table renders summary.timeline segments, not
+# recent_activity rows. An inherited episode verdict fanned out onto member
+# segments must stay distinguishable from a directly classified unit or the
+# UI reports many independent CLASSIFIED judgments for a single AI verdict
+# (the "every row PRODUCTIVE 78%" phenomenon).
+
+
+def _timeline_fixture():
+    """Two episode members + one direct + one failed + one pending session."""
+    from noema.api import NoemaService as _Service
+    from noema.infrastructure.activity_sources.activitywatch import (
+        ActivityWatchAdapter as _Adapter,
+    )
+
+    store = SQLiteStore()
+    service = _Service(_Adapter(), store)
+
+    def _event(app, title, start, duration, key):
+        event = ActivityEvent(
+            timestamp=start, duration=duration, device="laptop",
+            app=app, title=title, bucket_id="window", source_event_id=key,
+        )
+        return event
+
+    specs = [
+        ("Firefox", "Evening trailers roundup", "2026-09-04T10:00:00Z", 30, "ev-a"),
+        ("Firefox", "Evening videos queue", "2026-09-04T10:01:00Z", 30, "ev-b"),
+        ("Brave", "Claude Code session", "2026-09-04T10:02:00Z", 30, "ev-c"),
+        ("explorer", "unknown", "2026-09-04T10:03:00Z", 30, "ev-d"),
+        ("Firefox", "Control systems notes", "2026-09-04T10:04:00Z", 30, "ev-e"),
+    ]
+    events = [_event(app, title, start, duration, key) for app, title, start, duration, key in specs]
+    service.ingest_events(events)
+    # One raw session per event with the event's own key (the sessionizer
+    # would merge same-app neighbours; the lineage contract must hold for
+    # explicitly built sessions too).
+    sessions = {}
+    for app, title, start, duration, key in specs:
+        from datetime import timedelta
+
+        event = next(e for e in events if e.source_event_id == key)
+        end = (event.timestamp + timedelta(seconds=event.duration)).isoformat().replace("+00:00", "Z")
+        raw = ActivitySession(
+            start=start, end=end,
+            device="laptop", app=app, title=title,
+            event_keys=(event.event_key,),
+        )
+        store.insert_session(raw)
+        sessions[key] = raw
+    return store, service, sessions
+
+
+def test_daily_summary_timeline_marks_inherited_segments():
+    """Coherent members keep a verified episode verdict; others don't.
+
+    Semantic V3 contract: episode membership alone licenses nothing. Each
+    member slice must pass the extension gate (positive continuity);
+    divergent or thin slices aggregate as unclassified time instead.
+    """
+    from noema.domain.semantic import ExtensionProvenance
+
+    store, service, sessions = _timeline_fixture()
+    episode = MeaningfulSession(
+        start_time="2026-09-04T10:00:00Z",
+        end_time="2026-09-04T10:02:00Z",
+        device_set=("laptop",),
+        activity_session_ids=(sessions["ev-a"].id, sessions["ev-b"].id),
+        primary_project="Evening",
+        primary_task="Evening videos",
+        evidence_quality=EvidenceQuality.MODERATE,
+    )
+    store.insert_meaningful_session(episode)
+    # Exactly ONE AI verdict in the whole window: on the episode.
+    store.insert_classification(Classification(
+        episode.id, category="entertainment", activity_type="browsing",
+        productivity="distracting", confidence=0.78,
+        topic="Evening videos", activity="Watching trailers",
+        classification_status="classified",
+        provider="gemini", model="gemini-test", source="gemini"))
+    # One directly classified raw session with its own verdict.
+    store.insert_classification(Classification(
+        sessions["ev-c"].id, category="development", activity_type="coding",
+        productivity="productive", confidence=0.85,
+        classification_status="classified",
+        provider="gemini", model="gemini-test", source="gemini"))
+
+    zone = ZoneInfo("Asia/Kolkata")
+    start = datetime(2026, 9, 4, tzinfo=zone)
+    summary = service.daily_summary(
+        start.astimezone(ZoneInfo("UTC")),
+        start.replace(day=5).astimezone(ZoneInfo("UTC")),
+        timezone_name="Asia/Kolkata",
+    )
+    by_activity = {seg["activity"]: seg for seg in summary["timeline"]}
+
+    for title in ("Evening trailers roundup", "Evening videos queue"):
+        segment = by_activity[title]
+        assert segment["productivity"] == "distractive"
+        assert segment["confidence"] == 0.78
+        assert segment["classification_status"] == "classified"
+        assert segment["meaningful_session_id"] == episode.id
+        assert segment["inherited_from"] == episode.id
+        assert segment["provenance"] == ExtensionProvenance.VERIFIED_EXTENSION
+
+    direct = by_activity["Claude Code session"]
+    assert direct["productivity"] == "productive"
+    assert direct["confidence"] == 0.85
+    assert direct["inherited_from"] is None
+    assert direct["meaningful_session_id"] is None
+    assert direct["provenance"] == ExtensionProvenance.DIRECT
+
+    # No-evidence rows stay honest: pending, never a verdict.
+    for title in ("unknown", "Control systems notes"):
+        segment = by_activity[title]
+        assert segment["classification_status"] == "pending"
+        assert segment["productivity"] == "unclassified"
+        assert segment["inherited_from"] is None
+        assert segment["provenance"] == ExtensionProvenance.NONE
+    store.close()
+
+
+def test_daily_summary_merge_never_mixes_lineage():
+    """Adjacent same-activity fragments keep provenance when merged."""
+    first = {
+        "timestamp": "2026-09-04T10:00:00+00:00", "end": "2026-09-04T10:00:30+00:00",
+        "seconds": 30.0, "application": "Firefox", "activity": "Cinepolis",
+        "productivity": "distractive", "subcategory": "media",
+        "confidence": 0.78, "inherited_from": "episode-1",
+        "meaningful_session_id": "episode-1",
+    }
+    second = dict(first, timestamp="2026-09-04T10:00:32+00:00",
+                  end="2026-09-04T10:01:02+00:00", inherited_from=None,
+                  meaningful_session_id=None)
+    merged = NoemaService._merge_summary_segments([first, second])
+    assert len(merged) == 2
+    assert merged[0]["inherited_from"] == "episode-1"
+    assert merged[1]["inherited_from"] is None
+
+    twin = dict(first, timestamp="2026-09-04T10:00:32+00:00",
+                end="2026-09-04T10:01:02+00:00", seconds=30.0)
+    merged_same = NoemaService._merge_summary_segments([first, twin])
+    assert len(merged_same) == 1
+    assert merged_same[0]["inherited_from"] == "episode-1"
+    assert merged_same[0]["seconds"] == 60.0
+
+
+def test_failed_classification_never_becomes_a_verdict_in_timeline():
+    """A failed row must surface as pending/unclassified, never productive."""
+    store, service, sessions = _timeline_fixture()
+    store.insert_classification(Classification(
+        sessions["ev-c"].id, category="productive", activity_type="coding",
+        productivity="productive", confidence=0.78,
+        classification_status="classification_failed",
+        provider="gemini", model="gemini-test", source="gemini"))
+
+    zone = ZoneInfo("Asia/Kolkata")
+    start = datetime(2026, 9, 4, tzinfo=zone)
+    summary = service.daily_summary(
+        start.astimezone(ZoneInfo("UTC")),
+        start.replace(day=5).astimezone(ZoneInfo("UTC")),
+        timezone_name="Asia/Kolkata",
+    )
+    by_activity = {seg["activity"]: seg for seg in summary["timeline"]}
+    failed = by_activity["Claude Code session"]
+    assert failed["classification_status"] == "pending"
+    assert failed["productivity"] == "unclassified"
+    assert failed["inherited_from"] is None
     store.close()

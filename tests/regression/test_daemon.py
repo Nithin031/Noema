@@ -99,7 +99,8 @@ def test_daemon_runs_ordered_pipeline_and_exposes_health():
     assert result["ingest"]["ingested"]["accepted"] == 1
     assert result["ingest"]["raw_sessions"] == 1
     assert result["semantics"]["raw_classifications"] == 0
-    assert result["semantics"]["classifications"] == 1
+    # One episode expands to episode + member items.
+    assert result["semantics"]["classifications"] == 2
     assert result["behavior"]["actionable"] == 0
     assert result["behavior"]["interventions_considered"] == 0
     assert result["outcomes"]["executed_interventions"] == 0
@@ -352,14 +353,14 @@ def test_semantics_processes_newest_chunk_first_and_continues_next_run():
     )
     try:
         first = daemon.run_once(now="2026-09-06T12:00:00Z")
-        assert first["semantics"]["classifications"] == 2
+        assert first["semantics"]["classifications"] == 4
         assert first["semantics"]["total_pending"] == 5
         assert first["semantics"]["remaining_pending"] == 3
         done_ids = {item.session_id for item in store.query_classifications(limit=100000)}
-        assert len(done_ids) == 2
+        assert len(done_ids) == 4
         second = daemon.run_once(now="2026-09-06T12:30:00Z")
-        assert second["semantics"]["classifications"] == 2
-        assert len({item.session_id for item in store.query_classifications(limit=100000)}) == 4
+        assert second["semantics"]["classifications"] == 4
+        assert len({item.session_id for item in store.query_classifications(limit=100000)}) == 8
         # Newest-first: the latest window is classified before older backlog.
         assert done_ids != {item.session_id for item in store.query_classifications(limit=100000)}
     finally:

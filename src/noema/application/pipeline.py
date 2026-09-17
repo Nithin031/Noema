@@ -27,6 +27,7 @@ from noema.domain.normalization import EventNormalizer, application_identity
 from noema.domain.presence import PresenceDetector, PresenceState, PresenceTimeline, is_presence_event
 from noema.domain.privacy import PrivacyFilter
 from noema.domain.sessions import ActivitySession, Sessionizer
+from noema.domain.semantic import ExtensionProvenance, assess_extension
 from noema.domain.session_context import browser_name
 
 
@@ -443,26 +444,55 @@ class NoemaService:
             events = window_events
         sessions = self.store.query_sessions(start=effective_start, end=end, limit=100000)
         # The live pipeline classifies meaningful sessions, so a raw session
-        # without its own row inherits its parent meaningful verdict. Direct
-        # rows always win. Without this the summary would show unclassified
-        # time that Results already displays as classified.
+        # without its own row is a CANDIDATE for its parent meaningful
+        # verdict — but candidacy is not coverage (see the extension gate in
+        # _summary_segment). Direct rows always win. Coverage that fails the
+        # gate aggregates as unclassified time.
         meaningful_parents: dict[str, str] = {}
+        meaningful_by_id: dict[str, Any] = {}
+        episode_apps: dict[str, set[str]] = {}
+        episode_domains: dict[str, set[str]] = {}
         for meaningful in self.store.query_meaningful_sessions(
             start=effective_start, end=end, limit=100000
         ):
+            meaningful_by_id[meaningful.id] = meaningful
             for raw_id in meaningful.activity_session_ids:
                 meaningful_parents.setdefault(raw_id, meaningful.id)
+        for session in sessions:
+            parent_id = meaningful_parents.get(session.id)
+            if parent_id is not None:
+                if session.app:
+                    episode_apps.setdefault(parent_id, set()).add(str(session.app))
+                if session.domain:
+                    episode_domains.setdefault(parent_id, set()).add(str(session.domain))
         all_ids = [s.id for s in sessions] + list(meaningful_parents.values())
         classifications = {
             session_id: item
             for session_id, item in self.store.query_classification_map(all_ids).items()
             if item.classification_status == "classified" and item.source != "heuristic"
         }
+        # Lineage tracking for the timeline: a raw session carrying its
+        # parent's verdict must stay distinguishable from a directly
+        # classified unit. Membership alone licenses nothing — each emitted
+        # slice passes through the extension gate in _summary_segment, which
+        # either marks VERIFIED_EXTENSION or strips the verdict.
+        # `classifications` still carries the fanned verdict objects so the
+        # gate can evaluate against them; `inherited_ids` records which keys
+        # are candidates rather than direct verdicts.
+        inherited_ids: set[str] = set()
         for session in sessions:
             if session.id not in classifications and session.id in meaningful_parents:
                 parent = classifications.get(meaningful_parents[session.id])
                 if parent is not None:
                     classifications[session.id] = parent
+                    inherited_ids.add(session.id)
+        lineage = {
+            "parents": meaningful_parents,
+            "inherited": inherited_ids,
+            "episodes": meaningful_by_id,
+            "apps": episode_apps,
+            "domains": episode_domains,
+        }
         event_sessions = {
             event_key: session.id
             for session in sessions
@@ -483,7 +513,7 @@ class NoemaService:
                 if afk.start > sub_cursor:
                     segments.append(self._summary_segment(
                         piece_event, sub_cursor, min(afk.start, piece_end),
-                        event_sessions, classifications))
+                        event_sessions, classifications, lineage))
                 afk_piece_end = min(afk.end, piece_end)
                 afk_piece_start = max(sub_cursor, afk.start)
                 if afk_piece_end > afk_piece_start:
@@ -493,7 +523,8 @@ class NoemaService:
                     break
             if sub_cursor < piece_end:
                 segments.append(self._summary_segment(
-                    piece_event, sub_cursor, piece_end, event_sessions, classifications))
+                    piece_event, sub_cursor, piece_end, event_sessions,
+                    classifications, lineage))
 
         occupied: list[tuple[datetime, datetime]] = []
         segments: list[dict] = []
@@ -605,6 +636,11 @@ class NoemaService:
                 and previous["activity"].casefold() == segment["activity"].casefold()
                 and previous["productivity"] == segment["productivity"]
                 and previous["subcategory"] == segment["subcategory"]
+                # Never merge across different lineage: a directly classified
+                # fragment and an inherited one must keep their own
+                # provenance even when they describe the same activity.
+                and previous.get("inherited_from") == segment.get("inherited_from")
+                and previous.get("meaningful_session_id") == segment.get("meaningful_session_id")
             )
             previous_end = datetime.fromisoformat(previous["end"].replace("Z", "+00:00"))
             current_start = datetime.fromisoformat(segment["timestamp"].replace("Z", "+00:00"))
@@ -642,9 +678,62 @@ class NoemaService:
         }
 
     @staticmethod
-    def _summary_segment(event: Any, start: datetime, end: datetime, event_sessions: dict, classifications: dict) -> dict:
+    def _summary_segment(event: Any, start: datetime, end: datetime, event_sessions: dict, classifications: dict,
+                         lineage: Optional[dict] = None) -> dict:
         session_id = event_sessions.get(event.event_key)
         classification = classifications.get(session_id)
+        info = lineage or {}
+        parents = info.get("parents", {})
+        inherited = info.get("inherited", set())
+        episodes = info.get("episodes", {})
+        apps = info.get("apps", {})
+        domains = info.get("domains", {})
+        parent_id = parents.get(session_id)
+        provenance = ExtensionProvenance.NONE
+        inherited_from = None
+        if classification is not None and session_id not in inherited:
+            # The model evaluated this unit's own evidence directly.
+            provenance = ExtensionProvenance.DIRECT
+        elif classification is not None and parent_id is not None:
+            # Candidate extension: the verdict may cover this slice ONLY if
+            # the deterministic gate positively verifies continuity. Absence
+            # of contradiction is never enough; doubt strips the verdict.
+            episode = episodes.get(parent_id)
+            assessment = assess_extension(
+                {
+                    "app": event.app, "title": event.title,
+                    "domain": event.domain, "url": event.url,
+                    "seconds": (end - start).total_seconds(),
+                    "start": start, "end": end,
+                    "window_id": event.browser_window_id,
+                    "tab_id": event.browser_tab_id,
+                },
+                {
+                    "category": classification.category,
+                    "productivity": classification.productivity,
+                    "topic": classification.topic,
+                    "activity": classification.activity,
+                    "prompt_version": classification.prompt_version,
+                    "classifier_version": classification.classifier_version,
+                },
+                {
+                    "primary_task": getattr(episode, "primary_task", None),
+                    "primary_topic": getattr(episode, "primary_topic", None),
+                    "start": getattr(episode, "start_time", None),
+                    "end": getattr(episode, "end_time", None),
+                    "browser_window_id": getattr(episode, "browser_window_id", None),
+                    "browser_tab_id": getattr(episode, "browser_tab_id", None),
+                } if episode is not None else {},
+                set(apps.get(parent_id, set())),
+                set(domains.get(parent_id, set())),
+            ) if episode is not None else None
+            if assessment is not None and assessment.licensed:
+                provenance = assessment.provenance
+                inherited_from = parent_id
+            else:
+                # Not licensed: the slice keeps no verdict. It aggregates as
+                # unclassified time and displays as pending/unknown.
+                classification = None
         classified_productivity = None
         if classification:
             classified_productivity = "distractive" if classification.category == "distractive" or classification.productivity == "distracting" else classification.category
@@ -679,6 +768,15 @@ class NoemaService:
             "classification_status": classification.classification_status if classification else "pending",
             "evidence_quality": classification.evidence_quality if classification else None,
             "evidence_quality_score": classification.evidence_quality_score if classification else None,
+            # Lineage: the meaningful episode this slice belongs to (if any),
+            # the episode a covering verdict was inherited from (if any),
+            # and the epistemic provenance of the displayed verdict:
+            # direct (model judged this unit), verified_extension (model did
+            # not see this slice; deterministic local analysis positively
+            # verified continuity), or none (no covering verdict).
+            "meaningful_session_id": parent_id,
+            "inherited_from": inherited_from,
+            "provenance": provenance,
         }
 
     def events_with_classifications(self, events: Iterable[Any]) -> list:
@@ -701,10 +799,14 @@ class NoemaService:
         for stored_event in events:
             payload = stored_event.to_dict()
             payload["classification_status"] = "pending"
+            # The event re-displays its own session's verdict: same evidence,
+            # no new judgment implied (REUSED), or no verdict at all (NONE).
+            payload["provenance"] = ExtensionProvenance.NONE
             session_id = event_session_ids.get(stored_event.event.event_key)
             classification = classifications.get(session_id)
             if classification is not None:
                 payload.update({
+                    "provenance": ExtensionProvenance.REUSED,
                     "category": classification.category,
                     "topic": classification.topic,
                     "activity_type": classification.activity_type,
@@ -845,6 +947,15 @@ class NoemaService:
                 "model": classification.model if classification else None,
                 "inherited_from": inherited_from,
                 "meaningful_session_id": meaningful_session_id,
+                # Structural lineage display: this row belongs to a classified
+                # episode (inherited) or carries its own verdict (direct).
+                # Coverage-bearing surfaces (the summary timeline) apply the
+                # stricter extension gate instead; see _summary_segment.
+                "provenance": (
+                    ExtensionProvenance.INHERITED if inherited_from is not None
+                    else ExtensionProvenance.DIRECT if classification is not None
+                    else ExtensionProvenance.NONE
+                ),
             }
             rows.append(item)
         rows.sort(key=lambda item: (item["timestamp"], item["id"]), reverse=True)
@@ -1166,6 +1277,13 @@ class NoemaService:
     RETRY_BACKOFF_MAX_MINUTES = 120.0
     CLASSIFICATION_RETRIES_MAX = 5
     CLASSIFIER_VERSION_DEFAULT = "1"
+    # Member expansion bounds (batched per-member classification). One
+    # episode's expansion never exceeds a daemon batch so a giant episode
+    # cannot wedge a cycle; uncovered remainder converges on later cycles
+    # because member coverage feeds queue eligibility. Sibling context per
+    # member is capped separately so prompts stay bounded.
+    MAX_MEMBER_ITEMS_PER_EPISODE = 20
+    MAX_MEMBER_SIBLINGS = 10
 
     @staticmethod
     def retry_delay_minutes(retry_count: int) -> float:
@@ -1279,15 +1397,52 @@ class NoemaService:
         version. Successfully classified rows under the current version,
         terminally failed rows, and AFK-only sessions are excluded so quota
         is never wasted and the LLM never sees idle time.
+
+        Meaningful sessions additionally qualify while any member raw
+        session still needs a verdict, so per-member coverage converges
+        across cycles instead of stranding remainder behind the per-episode
+        expansion cap.
         """
 
         current = coerce_timestamp(now) if now is not None else datetime.now(timezone.utc)
         candidates = list(sessions)
         stored = self.store.query_classification_map([item.id for item in candidates])
+        # Member coverage for meaningful sessions: an episode re-qualifies
+        # while a resolvable member still needs a verdict, so per-member
+        # coverage converges across cycles. Unknown member ids (pruned or
+        # fixture-phantom sessions) are ignored — only members present in
+        # the store can need work, otherwise phantom ids would re-queue
+        # their episode forever.
+        member_ids = [
+            str(member_id)
+            for item in candidates
+            for member_id in (getattr(item, "activity_session_ids", None) or ())
+            if str(member_id or "").strip()
+        ]
+        member_rows = self.store.query_classification_map(member_ids) if member_ids else {}
+        present_members: dict[str, set[str]] = {}
+        if member_ids:
+            try:
+                resolved = self.store.query_sessions_by_ids(member_ids)
+            except (AttributeError, OSError, TypeError, ValueError):
+                resolved = []
+            resolved_ids = {item.id for item in resolved}
+            for item in candidates:
+                present_members[item.id] = {
+                    str(member_id)
+                    for member_id in (getattr(item, "activity_session_ids", None) or ())
+                    if str(member_id) in resolved_ids
+                }
         return [
             item for item in candidates
             if not self._is_afk_only(item)
-            and self._is_eligible(stored.get(item.id), current, classifier_version, max_retries)
+            and (
+                self._is_eligible(stored.get(item.id), current, classifier_version, max_retries)
+                or any(
+                    self._is_eligible(member_rows.get(member_id), current, classifier_version, max_retries)
+                    for member_id in present_members.get(item.id, ())
+                )
+            )
         ]
 
     def presence_snapshot(self, now: Optional[Any] = None) -> dict:
@@ -2495,20 +2650,49 @@ class NoemaService:
         classifier_version: str = CLASSIFIER_VERSION_DEFAULT,
         max_retries: int = CLASSIFICATION_RETRIES_MAX,
     ) -> list:
-        """Classify canonical Gen 1.5 sessions, retaining raw sessions as evidence."""
+        """Classify canonical Gen 1.5 sessions, retaining raw sessions as evidence.
+
+        Each episode is expanded into batched items — the episode itself
+        plus member raw sessions still needing verdicts — so the model
+        judges every member in the group's context instead of blending the
+        group into a single aggregate verdict. Items ride the existing
+        batch machinery (shared header, token packing, session_id echo
+        validation, per-item fallback), and every output follows the same
+        verdict schema. Members already carrying verdicts are skipped;
+        unknown member ids are skipped.
+        """
 
         from noema.observability.models import new_request_id
 
         ordered = list(sessions)
         now = datetime.now(timezone.utc)
         request_id = new_request_id()
-        stored = self.store.query_classification_map([item.id for item in ordered])
+        context_by_session = dict(context_by_session or {})
+        expanded: list = []
+        sealed: set = set()
+        for episode in ordered:
+            expanded.append(episode)
+            members = self._episode_members(episode)
+            if not members:
+                continue
+            pending = self.pending_classification_sessions(
+                members, now=now,
+                classifier_version=classifier_version,
+                max_retries=max_retries,
+            )
+            for member in pending[:max(1, int(self.MAX_MEMBER_ITEMS_PER_EPISODE))]:
+                expanded.append(member)
+                sealed.add(member.id)
+                context_by_session.setdefault(
+                    member.id, self._member_context(episode, member, members))
+        stored = self.store.query_classification_map([item.id for item in expanded])
         classifications = [
             self._apply_retry_accounting(result, stored.get(result.session_id), now, classifier_version, max_retries)
             for result in self.classifier.classify_many(
-                ordered,
+                expanded,
                 context_by_session=context_by_session,
                 telemetry={"request_id": request_id},
+                sealed_context_ids=sealed,
             )
         ]
         if persist:
@@ -2517,6 +2701,52 @@ class NoemaService:
                 self.store.insert_classifications(classifications)
                 state["rows_affected"] = len(classifications)
         return classifications
+
+    def _episode_members(self, episode: Any) -> list:
+        """Resolve one episode's member raw sessions in episode order.
+
+        Unknown ids are skipped: a member that cannot be loaded cannot be
+        judged, and the episode verdict path still covers display.
+        """
+        member_ids = [
+            str(member_id)
+            for member_id in (getattr(episode, "activity_session_ids", None) or ())
+            if str(member_id or "").strip()
+        ]
+        if not member_ids:
+            return []
+        try:
+            members = self.store.query_sessions_by_ids(member_ids)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return []
+        by_id = {item.id: item for item in members}
+        return [by_id[mid] for mid in member_ids if mid in by_id]
+
+    @staticmethod
+    def _member_context(episode: Any, member: Any, members: list) -> list:
+        """Episode-scoped context for one member item: the episode envelope
+        plus capped sibling items. Never draws from other episodes, so batch
+        items cannot corroborate each other across group boundaries."""
+        siblings = []
+        for item in members or ():
+            if getattr(item, "id", None) == getattr(member, "id", None):
+                continue
+            try:
+                siblings.append({
+                    "application": item.app,
+                    "title": item.title,
+                    "domain": item.domain,
+                    "url": item.url,
+                    "duration_seconds": item.duration,
+                })
+            except (AttributeError, TypeError, ValueError):
+                continue
+        envelope = {
+            "episode_task": getattr(episode, "primary_task", None),
+            "episode_topic": getattr(episode, "primary_topic", None),
+            "episode_project": getattr(episode, "primary_project", None),
+        }
+        return [envelope] + siblings[:NoemaService.MAX_MEMBER_SIBLINGS]
 
     def classify_stored_meaningful_sessions(
         self,

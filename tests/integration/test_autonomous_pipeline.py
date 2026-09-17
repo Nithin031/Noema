@@ -207,7 +207,8 @@ def test_second_cycle_makes_zero_llm_calls():
         DaemonConfig(db_path=":memory:", lock_path=str(_test_path(".auto-idem.lock"))),
     )
     first = daemon.run_once(now="2026-09-06T10:10:00Z")
-    assert first["semantics"]["classifications"] == 1
+    # One pending episode expands to episode + member items in one batch.
+    assert first["semantics"]["classifications"] == 2
     calls_after_first = client.calls
     assert calls_after_first >= 1
     second = daemon.run_once(now="2026-09-06T10:20:00Z")
@@ -361,10 +362,11 @@ def test_provider_error_never_kills_the_cycle():
         DaemonConfig(db_path=":memory:", lock_path=str(_test_path(".auto-survive.lock"))),
     )
     result = daemon.run_once(now="2026-09-06T10:10:00Z")
-    assert result["semantics"]["classifications"] == 1
-    assert result["semantics"]["failed"] == 1
+    # Episode + member items fail together; the cycle itself survives.
+    assert result["semantics"]["classifications"] == 2
+    assert result["semantics"]["failed"] == 2
     # run_once drives stages directly (no worker bookkeeping); the scheduler
-    # itself must stay usable, and the failed row must back off: a cycle one
+    # itself must stay usable, and the failed rows must back off: a cycle one
     # minute later finds nothing due.
     assert daemon.health_dict()["workers"]["semantics"]["status"] != "error"
     calls_after_first = client.calls
@@ -372,9 +374,9 @@ def test_provider_error_never_kills_the_cycle():
     assert again["semantics"]["classifications"] == 0
     assert client.calls == calls_after_first
     rows = store.query_classifications(limit=100000)
-    assert len(rows) == 1
-    assert rows[0].retry_count == 1
-    assert rows[0].last_error
+    assert len(rows) == 2
+    assert all(item.retry_count == 1 for item in rows)
+    assert all(item.last_error for item in rows)
     store.close()
 
 

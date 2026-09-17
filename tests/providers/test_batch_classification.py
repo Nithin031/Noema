@@ -291,3 +291,128 @@ def test_cache_does_not_contaminate_meaningful_sessions_with_same_project():
     key1 = Classifier._cache_key(m1)
     key2 = Classifier._cache_key(m2)
     assert key1 != key2, "Different MeaningfulSessions must not share a cache key"
+
+
+def _chain_entries(sessions):
+    return [{"session": s, "evidence": {"t": "e"}, "prompt": "p"} for s in sessions]
+
+
+def test_batch_maps_shuffled_output_by_session_id():
+    sessions = [make_session("shuf-{}".format(i)) for i in range(4)]
+    categories = ["productive", "distractive", "neutral", "productive"]
+    host = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(sid, cat)
+                           for sid, cat in zip(reversed(ids), reversed(categories))],
+    )
+    chain = ProviderChain(hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []))
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    # Order in the response must not matter: every verdict lands on its echo.
+    for session, category in zip(sessions, categories):
+        assert results[session.id]["category"] == category
+
+
+def test_batch_duplicate_output_id_fails_group_safely():
+    sessions = [make_session("dup-{}".format(i)) for i in range(2)]
+    dup = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(ids[0]), valid_item(ids[0])],
+    )
+    good = FakeBatchHost(
+        "gemma-4-31b-it",
+        lambda ids, evs: [valid_item(session_id) for session_id in ids],
+    )
+    chain = ProviderChain(hosted=[dup, good], ollama=FakeBatchHost("x", lambda i, e: []))
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    # The duplicated group is rejected outright, then served cleanly.
+    assert set(results) == {s.id for s in sessions}
+    assert dup.calls == 1
+    assert good.calls == 1
+
+
+def test_batch_missing_output_id_leaves_item_unserved():
+    sessions = [make_session("miss-{}".format(i)) for i in range(3)]
+    host = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(ids[0]), valid_item(ids[1])],
+    )
+    chain = ProviderChain(hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []))
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    assert set(results) == {sessions[0].id, sessions[1].id}
+    assert sessions[2].id not in results
+
+
+def test_batch_unknown_output_id_is_ignored():
+    sessions = [make_session("unk-{}".format(i)) for i in range(2)]
+    host = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(ids[0]), valid_item("hallucinated-id")],
+    )
+    chain = ProviderChain(hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []))
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    assert set(results) == {sessions[0].id}
+    assert "hallucinated-id" not in results
+
+
+def test_batch_malformed_item_does_not_corrupt_siblings():
+    sessions = [make_session("mal-{}".format(i)) for i in range(3)]
+    bad = {"session_id": sessions[1].id, "category": "nonsense",
+           "activity": "x", "signal": "y"}
+    host = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(ids[0]), bad, valid_item(ids[2], "distractive")],
+    )
+    chain = ProviderChain(hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []))
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    assert set(results) == {sessions[0].id, sessions[2].id}
+    assert results[sessions[2].id]["category"] == "distractive"
+
+
+def test_pack_batches_splits_mixed_sizes_by_tokens():
+    small = [make_session("mix-s-{}".format(i)) for i in range(4)]
+    bigs = [make_session("mix-big-{}".format(i)) for i in range(2)]
+    entries = (
+        [{"session": s, "evidence": {"t": "e"}, "prompt": "p"} for s in small]
+        + [{"session": s, "evidence": {"blob": "x" * 300000}, "prompt": "p"} for s in bigs]
+    )
+    host = FakeBatchHost("gemini-2.5-flash", lambda ids, evs: [])
+    chain = ProviderChain(hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []))
+    # Tight explicit budget: each ~100k-token blob fits alone, never paired.
+    groups = chain._pack_batches(entries, host, 150000)
+
+    covered = sorted(sid for group, _ in groups for sid in [e["session"].id for e in group])
+    assert covered == sorted(e["session"].id for e in entries)
+    assert len(groups) >= 2
+    for group, measured in groups:
+        assert measured is None or measured <= 150000
+        big_in_group = [e for e in group if e["session"].id in {s.id for s in bigs}]
+        assert len(big_in_group) <= 1
+
+
+def test_one_batch_consumes_one_ledger_request(tmp_path):
+    from noema.infrastructure.providers import QuotaLedger
+
+    sessions = [make_session("led-{}".format(i)) for i in range(5)]
+    host = FakeBatchHost(
+        "gemini-2.5-flash",
+        lambda ids, evs: [valid_item(session_id) for session_id in ids])
+    chain = ProviderChain(
+        hosted=[host], ollama=FakeBatchHost("x", lambda i, e: []),
+        usage_path=tmp_path / "usage.json",
+    )
+
+    results = chain.classify_batch(_chain_entries(sessions))
+
+    assert set(results) == {s.id for s in sessions}
+    ledger = QuotaLedger(tmp_path / "usage.json")
+    assert ledger.usage("llm", "gemini-2.5-flash")["requests"] == 1

@@ -53,7 +53,7 @@ export type DailySegment = {
   activity: string;
   title?: string;
   domain?: string;
-  productivity: 'productive' | 'distracting' | 'neutral' | 'unclassified';
+  productivity: 'productive' | 'distractive' | 'neutral' | 'unclassified' | 'afk';
   confidence: number;
   activity_description?: string;
   signal?: string;
@@ -61,6 +61,9 @@ export type DailySegment = {
   classification_status?: string;
   evidence_quality?: string | null;
   evidence_quality_score?: number | null;
+  meaningful_session_id?: string | null;
+  inherited_from?: string | null;
+  provenance?: 'direct' | 'verified_extension' | 'inherited' | 'reused' | 'stale' | 'none' | null;
 };
 
 export type DailySummary = {

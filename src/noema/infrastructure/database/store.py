@@ -101,6 +101,36 @@ CREATE INDEX IF NOT EXISTS idx_semantic_classifications_productivity
     ON semantic_classifications(productivity);
 CREATE INDEX IF NOT EXISTS idx_semantic_classifications_status
     ON semantic_classifications(classification_status);
+-- Superseded verdicts. insert_classification archives the previous
+-- classified row here before overwriting it, so reclassification
+-- (explicit requeues, backfills) never mutates history: the current row
+-- stays the live verdict and every prior verdict remains queryable.
+CREATE TABLE IF NOT EXISTS classification_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    category TEXT NOT NULL,
+    topic TEXT,
+    project TEXT,
+    activity_type TEXT NOT NULL,
+    productivity TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    subcategory TEXT NOT NULL DEFAULT 'other',
+    activity TEXT NOT NULL DEFAULT 'Ambiguous activity',
+    signal TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'pending',
+    classification_status TEXT NOT NULL DEFAULT 'pending',
+    service TEXT,
+    intent_signal TEXT,
+    classifier_version TEXT NOT NULL DEFAULT '1',
+    prompt_version TEXT NOT NULL DEFAULT '1',
+    evidence_quality TEXT,
+    evidence_quality_score REAL
+);
+CREATE INDEX IF NOT EXISTS idx_classification_revisions_session
+    ON classification_revisions(session_id);
 -- Human verdicts on stored classifications. Append-by-session: the latest
 -- row per session is the current verdict. The original classification row
 -- is never modified by feedback; this table only observes it.
@@ -1115,8 +1145,32 @@ class SQLiteStore:
             rows = self._connection.execute(query, parameters).fetchall()
         return [self._row_to_session(row) for row in rows]
 
+    def query_sessions_by_ids(self, session_ids: Iterable[str]) -> List[ActivitySession]:
+        """Fetch raw sessions for an explicit id set in one query.
+
+        Used to expand a meaningful session into its member items for
+        batched per-member classification. Unknown ids are skipped.
+        """
+        ids = [str(item) for item in dict.fromkeys(session_ids or []) if str(item or "").strip()]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM activity_sessions WHERE id IN ({}) ORDER BY start ASC, id ASC".format(placeholders),
+                ids,
+            ).fetchall()
+        return [self._row_to_session(row) for row in rows]
+
     def insert_classification(self, classification: Classification) -> bool:
-        """Persist or refresh the semantic result for one session."""
+        """Persist or refresh the semantic result for one session.
+
+        Overwriting a previously CLASSIFIED row archives the old verdict in
+        ``classification_revisions`` first (only when the verdict actually
+        changed), so reclassification preserves history instead of mutating
+        it. Transitions into a first verdict (pending -> classified) archive
+        nothing: there is no prior verdict to preserve.
+        """
 
         if not isinstance(classification, Classification):
             raise TypeError("SQLiteStore expects Classification instances")
@@ -1147,10 +1201,45 @@ class SQLiteStore:
             classification.classified_at.isoformat().replace("+00:00", "Z") if classification.classified_at else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         )
         with self._lock:
-            existed = self._connection.execute(
-                "SELECT 1 FROM semantic_classifications WHERE session_id = ?",
+            previous = self._connection.execute(
+                "SELECT * FROM semantic_classifications WHERE session_id = ?",
                 (classification.session_id,),
-            ).fetchone() is not None
+            ).fetchone()
+            existed = previous is not None
+            if existed and previous["classification_status"] == "classified":
+                old = dict(previous)
+                changed = any(
+                    str(old.get(key) or "") != str(getattr(classification, key, "") or "")
+                    for key in (
+                        "category", "productivity", "confidence", "topic",
+                        "activity", "model", "classifier_version",
+                        "prompt_version",
+                    )
+                )
+                if changed:
+                    self._connection.execute(
+                        """INSERT INTO classification_revisions
+                           (session_id, archived_at, category, topic, project,
+                            activity_type, productivity, confidence, provider,
+                            model, subcategory, activity, signal, source,
+                            classification_status, service, intent_signal,
+                            classifier_version, prompt_version,
+                            evidence_quality, evidence_quality_score)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                   ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            old["session_id"],
+                            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            old["category"], old["topic"], old["project"],
+                            old["activity_type"], old["productivity"],
+                            old["confidence"], old["provider"], old["model"],
+                            old["subcategory"], old["activity"], old["signal"],
+                            old["source"], old["classification_status"],
+                            old["service"], old["intent_signal"],
+                            old["classifier_version"], old["prompt_version"],
+                            old["evidence_quality"], old["evidence_quality_score"],
+                        ),
+                    )
             self._connection.execute(
                 """
                 INSERT INTO semantic_classifications
@@ -1259,6 +1348,20 @@ class SQLiteStore:
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return [self._row_to_classification(row) for row in rows]
+
+    def query_classification_revisions(
+        self, session_id: str, limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Superseded verdicts for one session, newest first (append-only)."""
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM classification_revisions WHERE session_id = ?"
+                " ORDER BY id DESC LIMIT ?",
+                (str(session_id), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def query_classification_map(self, session_ids: Iterable[str]) -> Dict[str, Classification]:
         """Fetch stored classifications for an explicit id set in one query."""

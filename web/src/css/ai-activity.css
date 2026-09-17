@@ -20,3 +20,10 @@
 @media(max-width:540px){.gauge-center strong{font-size:14px}.focus-body{gap:16px}.focus-copy>strong{font-size:17px}}
 
 .activity-table.episodes-7 .table-head,.activity-table.episodes-7 .table-row{display:grid;grid-template-columns:52px 64px 1.4fr 90px 110px 1fr 92px;gap:10px;min-width:820px}.feedback-pair{display:inline-flex;gap:6px}.mini-vote{border:1px solid var(--ai-line);background:transparent;color:var(--ai-muted);border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer}.mini-vote:hover{color:var(--ai-text);border-color:var(--ai-blue)}.mini-vote.on{color:var(--ai-green);border-color:#295646}
+
+/* Provenance badge: an episode verdict rendered on a member row. Violet-tinted
+   so it reads as neither a direct CLASSIFIED (green) nor PENDING (orange). */
+.badge.is-episode{color:var(--ai-violet);border-color:#4a4277;background:#171a2e}
+/* Verified extension: continuity positively verified locally. Same family as
+   EPISODE (not directly classified) with its own hook for future theming. */
+.badge.is-verified{color:var(--ai-violet);border-color:#4a4277;background:#171a2e}

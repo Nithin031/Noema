@@ -307,6 +307,9 @@ BATCH_MAX_OUTPUT_TOKENS = 65536
 BATCH_INSTRUCTIONS = (
     "BATCH REQUEST: classify EACH of the following {count} desktop activity sessions independently, "
     "in the given order. Sessions are independent observations; never merge them into one verdict. "
+    "List order carries no meaning: judge every session only from its own evidence plus its explicitly "
+    "labeled episode context, never from neighboring items, and never copy a verdict from one session_id "
+    "to another. "
     "Reason per session in this order: (1) application/container, (2) actual session title, "
     "(3) special application policy, (4) duration and continuity, (5) neighboring activity, "
     "(6) semantic activity, (7) evidence quality, (8) productive/distractive/neutral, "
@@ -1714,6 +1717,22 @@ class ProviderChain:
                         if _looks_like_rate_limited(exc):
                             state.record_rate_limited()
                 previous = (provider.name, exc)
+                continue
+            seen_ids: set = set()
+            duplicate_ids = False
+            for item in items:
+                echoed = str(item.get("session_id", "")) if isinstance(item, Mapping) else ""
+                if echoed in seen_ids:
+                    duplicate_ids = True
+                    break
+                seen_ids.add(echoed)
+            if duplicate_ids:
+                # Same session_id twice means the array cannot be trusted
+                # positionally: fail the group so it splits or falls back
+                # instead of silently letting one verdict overwrite another.
+                if state is not None:
+                    state.record_failure(ProviderError("batch returned duplicate session ids"))
+                previous = (provider.name, ProviderError("batch returned duplicate session ids"))
                 continue
             valid = {str(item.get("session_id")): item for item in items
                      if self._valid_item(item, item.get("session_id"))}

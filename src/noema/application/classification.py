@@ -682,7 +682,22 @@ class Classifier:
                 "event_count": session.event_count,
                 "source": session.source,
             }
-            context["recent_context"] = [Classifier._compact_context_item(item) for item in (recent_context or []) if isinstance(item, Mapping)]
+            recent_items = [item for item in (recent_context or []) if isinstance(item, Mapping)]
+            # Member-of-episode envelope (see NoemaService._member_context):
+            # the group this item was tokenized from, stated explicitly so
+            # the model never has to guess group boundaries. Episode keys
+            # are reserved here and never treated as neighboring activity.
+            episode = next((item for item in recent_items if "episode_task" in item), None)
+            if episode is not None:
+                context["episode"] = {
+                    "task": Classifier._truncate_text(episode.get("episode_task")),
+                    "topic": Classifier._truncate_text(episode.get("episode_topic")),
+                    "project": Classifier._truncate_text(episode.get("episode_project")),
+                }
+            context["recent_context"] = [
+                Classifier._compact_context_item(item)
+                for item in recent_items if "episode_task" not in item
+            ]
             
         context = Classifier._fit_prompt(context)
         return context
@@ -1064,6 +1079,7 @@ class Classifier:
         sessions: Iterable[Any],
         context_by_session: Optional[Mapping[str, Iterable[Mapping[str, Any]]]] = None,
         telemetry: Optional[Mapping[str, Any]] = None,
+        sealed_context_ids: Optional[Iterable[str]] = None,
     ) -> List[Classification]:
         original = list(sessions)
         started = datetime.now(timezone.utc)
@@ -1076,16 +1092,22 @@ class Classifier:
         ordered = sorted(original, key=lambda item: getattr(item, "start", getattr(item, "start_time", datetime.min)))
         results = {}
         context_by_session = context_by_session or {}
+        # Sealed items arrive with complete explicit context (e.g. episode
+        # members carrying their group envelope plus siblings). Skipping the
+        # automatic previous-items append keeps group boundaries exact:
+        # temporal neighbors from other groups must not corroborate.
+        sealed = {str(item) for item in (sealed_context_ids or ())}
         session_contexts = {}
         for index, session in enumerate(ordered):
             context = list(context_by_session.get(session.id, []))
-            for previous in ordered[max(0, index - 4):index]:
-                context.append({
-                    "application": getattr(previous, "app", None),
-                    "window_title": getattr(previous, "title", None),
-                    "domain": getattr(previous, "domain", None),
-                    "duration_seconds": getattr(previous, "duration", 0),
-                })
+            if str(session.id) not in sealed:
+                for previous in ordered[max(0, index - 4):index]:
+                    context.append({
+                        "application": getattr(previous, "app", None),
+                        "window_title": getattr(previous, "title", None),
+                        "domain": getattr(previous, "domain", None),
+                        "duration_seconds": getattr(previous, "duration", 0),
+                    })
             session_contexts[session.id] = context
         # Batch path: one shared instruction header plus one evidence object
         # per uncached session. Providers without batch support (local

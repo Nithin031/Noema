@@ -437,7 +437,8 @@ def test_end_to_end_active_flow_classifies_once_afk_never():
     assert len(pending) == 2
     results = service.classify_meaningful_sessions(pending)
     assert all(item.classification_status == "classified" for item in results)
-    assert service.classifier.provider.calls == 2
+    # Two episodes expand to episode + member items in one batch.
+    assert service.classifier.provider.calls == 4
     # Second pass: idempotent, zero new LLM calls.
     again = service.pending_classification_sessions(
         service.store.query_meaningful_sessions(limit=100000))
