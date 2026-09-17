@@ -354,6 +354,24 @@ export type ResultRow = {
   provider?: string | null;
   model?: string | null;
   inherited_from?: string | null;
+  meaningful_session_id?: string | null;
+  // V3 lineage. A verdict describes one bounded evidence window; these
+  // fields say which window, how it was arrived at, and whether it may be
+  // read as a current fact about this row.
+  provenance?: 'direct' | 'inherited' | 'reused' | 'reclassified' | null;
+  freshness?: 'fresh' | 'aging' | 'stale' | 'invalidated' | null;
+  presentable_as_current?: boolean;
+  segment_id?: string | null;
+  semantic_state?: string | null;
+  revision?: number | null;
+  lineage_reason?: string | null;
+  evidence_window?: {
+    start?: string;
+    end?: string;
+    duration_seconds?: number;
+    observation_count?: number;
+    active_seconds?: number;
+  } | null;
 };
 export type PresenceSnapshot = {  state?: string;
   last_input_at?: string | null;

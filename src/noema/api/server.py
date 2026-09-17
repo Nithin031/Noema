@@ -635,6 +635,38 @@ class NoemaApp:
                     debug["ollama_available"] = False
                 return self._response(start_response, HTTPStatus.OK, debug)
 
+            if method == "GET" and path in {"/api/debug/revisions", "/debug/revisions"}:
+                # Why the model was, or was not, called. Both directions are
+                # answerable here without reading source or re-running the
+                # pipeline.
+                limit = int(query.get("limit", ["50"])[0])
+                return self._response(start_response, HTTPStatus.OK, {
+                    "decisions": self.service.revision_decisions(limit=limit),
+                })
+
+            if method == "GET" and path in {"/api/semantic-segments", "/semantic-segments"}:
+                episode_id = query.get("episode_id", [None])[0]
+                start_at = query.get("start", [None])[0]
+                end_at = query.get("end", [None])[0]
+                limit = int(query.get("limit", ["1000"])[0])
+                return self._response(start_response, HTTPStatus.OK, {
+                    "segments": [item.to_dict() for item in self.service.semantic_segments(
+                        episode_id=episode_id,
+                        start=coerce_timestamp(start_at) if start_at else None,
+                        end=coerce_timestamp(end_at) if end_at else None,
+                        limit=limit)],
+                })
+
+            if method == "GET" and path in {"/api/classification/lineage", "/classification/lineage"}:
+                # The full provenance answer for one semantic unit: current
+                # verdict, every revision that preceded it, and the segments
+                # that bound each claim to its own evidence.
+                session_id = query.get("session_id", [None])[0]
+                if not session_id:
+                    raise ValueError("session_id is required")
+                return self._response(start_response, HTTPStatus.OK,
+                                      self.service.classification_lineage(session_id))
+
             if method == "GET" and path in {"/api/debug/quotas", "/debug/quotas"}:
                 return self._response(start_response, HTTPStatus.OK, self.service.provider_quotas())
 

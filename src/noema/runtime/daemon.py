@@ -993,11 +993,45 @@ class NoemaDaemon:
             if candidate.id not in seen_ids:
                 seen_ids.add(candidate.id)
                 candidates.append(candidate)
+        # Raw member rows are loaded once, before eligibility, so Stage A
+        # compares each episode's stored verdict against the same evidence
+        # the classifier would be shown without issuing a query per episode.
+        raw_sessions = self.service.store.query_sessions(
+            start=local_start, end=end, limit=max(self.config.query_limit, 100000)
+        )
+        raw_by_id = {item.id: item for item in raw_sessions}
+
+        def observations_for(episode: Any) -> list:
+            return [
+                {
+                    "session_id": raw_by_id[item_id].id,
+                    "application": raw_by_id[item_id].app,
+                    "title": raw_by_id[item_id].title,
+                    "domain": raw_by_id[item_id].domain,
+                    "url": raw_by_id[item_id].url,
+                    "start": raw_by_id[item_id].start,
+                    "end": raw_by_id[item_id].end,
+                    "timestamp": raw_by_id[item_id].start,
+                    "duration_seconds": raw_by_id[item_id].duration,
+                    "device": raw_by_id[item_id].device,
+                    "browser": raw_by_id[item_id].browser,
+                    "event_count": raw_by_id[item_id].event_count,
+                }
+                for item_id in episode.activity_session_ids
+                if item_id in raw_by_id
+            ]
+
+        eligibility_context = {
+            candidate.id: observations_for(candidate)
+            for candidate in candidates
+            if any(item_id in raw_by_id for item_id in candidate.activity_session_ids)
+        }
         pending = self.service.pending_classification_sessions(
             candidates,
             now=now,
             classifier_version=self.config.classification_version,
             max_retries=self.config.classification_max_retries,
+            context_by_session=eligibility_context,
         )
         total_pending = len(pending)
         # Process the pending backlog in bounded chunks, newest-first.
@@ -1016,10 +1050,6 @@ class NoemaDaemon:
             provider=getattr(getattr(getattr(self.service, "classifier", None), "provider", None), "name", None),
         )
 
-        raw_sessions = self.service.store.query_sessions(
-            start=local_start, end=end, limit=max(self.config.query_limit, 100000)
-        )
-        raw_by_id = {item.id: item for item in raw_sessions}
         if claimed_batches:
             self.service.store.update_classification_batch_payload(
                 claimed_batches[0]["batch_id"],

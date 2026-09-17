@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 
@@ -26,7 +26,27 @@ from noema.application.autonomous import AgentRecommendation, AutonomousAgent, A
 from noema.domain.normalization import EventNormalizer, application_identity
 from noema.domain.presence import PresenceDetector, PresenceState, PresenceTimeline, is_presence_event
 from noema.domain.privacy import PrivacyFilter
-from noema.domain.sessions import ActivitySession, Sessionizer
+from noema.domain.sessions import ActivitySession
+from noema.domain.semantic import (
+    EvidenceChangeDetector,
+    EvidenceWindow,
+    Freshness,
+    Provenance,
+    RevisionOutcome,
+    SemanticSegment,
+    SemanticState,
+    is_presentable_as_current,
+    resolve_for_interval,
+)
+from noema.application.semantic_revision import (
+    EvidenceBundle,
+    SemanticRevisionPlanner,
+    bundle_for_episode,
+    extend_window,
+    log_decision,
+    stamp_evidence_window,
+)
+from noema.domain.sessions import Sessionizer
 from noema.domain.session_context import browser_name
 
 
@@ -129,6 +149,20 @@ class NoemaService:
         # When None, all instrumentation below no-ops and product behavior
         # is unchanged. The layer observes; it never decides.
         self.telemetry = None
+        # V3 evidence-bounded semantics. The planner is Stage A: a local,
+        # free comparison of a stored verdict's evidence against the unit's
+        # current evidence. It decides whether a model call is warranted;
+        # it never classifies anything itself.
+        self.revision_planner = SemanticRevisionPlanner(EvidenceChangeDetector())
+        # Decisions from the most recent eligibility pass, keyed by episode
+        # id, so the classification step can reuse Stage A's reasoning
+        # instead of recomputing it.
+        self._last_revision_decisions: dict = {}
+        # Rolling record of revision decisions for the debug endpoint.
+        self._revision_log: list = []
+        # Verdict windows widened by a verified continuity check, applied
+        # after the eligibility sweep so the predicate itself stays pure.
+        self._pending_window_extensions: list = []
 
     def _observe_db(self, name: str, metadata: Optional[dict] = None):
         """No-op-safe timer for DB stages (context manager)."""
@@ -458,11 +492,36 @@ class NoemaService:
             for session_id, item in self.store.query_classification_map(all_ids).items()
             if item.classification_status == "classified" and item.source != "heuristic"
         }
+        # Same temporal rule the row view uses: an episode verdict may be
+        # attributed to a member session only inside the evidence window it
+        # was formed from. Aggregation counting an episode verdict over time
+        # it never observed is the same defect as displaying it there, just
+        # less visible.
+        segments_by_episode: dict = {}
+        for segment in self.store.query_semantic_segments(
+                episode_ids=list(dict.fromkeys(meaningful_parents.values())), limit=100000):
+            segments_by_episode.setdefault(segment.episode_id, []).append(segment)
+        episode_extent = {
+            item.id: (item.start_time, item.end_time)
+            for item in self.store.query_meaningful_sessions(
+                start=effective_start, end=end, limit=100000)
+        }
         for session in sessions:
-            if session.id not in classifications and session.id in meaningful_parents:
-                parent = classifications.get(meaningful_parents[session.id])
-                if parent is not None:
-                    classifications[session.id] = parent
+            if session.id in classifications or session.id not in meaningful_parents:
+                continue
+            parent_id = meaningful_parents[session.id]
+            extent = episode_extent.get(parent_id, (None, None))
+            resolved = resolve_for_interval(
+                session.start, session.end,
+                episode_verdict=classifications.get(parent_id),
+                segments=segments_by_episode.get(parent_id, ()),
+                episode_id=parent_id,
+                unit_start=session.start, unit_end=session.end,
+                unit_active_seconds=session.duration,
+                episode_start=extent[0], episode_end=extent[1],
+            )
+            if resolved.verdict is not None:
+                classifications[session.id] = resolved.verdict
         event_sessions = {
             event_key: session.id
             for session in sessions
@@ -539,7 +598,12 @@ class NoemaService:
         unclassified = totals["unclassified"]
         idle = totals["afk"]
         active_total = total - idle
+        uncertain = totals["uncertain"]
+        # Uncertain time is classified (a model saw it and declined to
+        # judge) but must never inflate a productivity score, so it is
+        # reported separately and excluded from the score denominator.
         classified_total = productive + totals["distractive"] + totals["neutral"]
+        scored_total = classified_total
         return {
             "date": start.astimezone(ZoneInfo(timezone_name)).date().isoformat(),
             "timezone": timezone_name,
@@ -556,15 +620,17 @@ class NoemaService:
             "neutral_seconds": round(totals["neutral"], 1),
             "unclassified_time": round(unclassified, 1),
             "unclassified_seconds": round(unclassified, 1),
+            "uncertain_time": round(uncertain, 1),
+            "uncertain_seconds": round(uncertain, 1),
             "classified_time": round(classified_total, 1),
             "classified_seconds": round(classified_total, 1),
             "afk_time": round(idle, 1),
             "afk_seconds": round(idle, 1),
             "active_time": round(active_total, 1),
             "active_seconds": round(active_total, 1),
-            "coverage_percent": round(classified_total / active_total * 100, 1) if active_total else None,
-            "productivity_score": round(productive / classified_total * 100) if classified_total else None,
-            "productivity_percentage": round(productive / classified_total * 100, 1) if classified_total else None,
+            "coverage_percent": round((classified_total + uncertain) / active_total * 100, 1) if active_total else None,
+            "productivity_score": round(productive / scored_total * 100) if scored_total else None,
+            "productivity_percentage": round(productive / scored_total * 100, 1) if scored_total else None,
             "applications": [
                 {"name": name, "seconds": round(seconds, 1), "category": (
                     next(iter(application_categories[name]))
@@ -646,9 +712,19 @@ class NoemaService:
         session_id = event_sessions.get(event.event_key)
         classification = classifications.get(session_id)
         classified_productivity = None
-        if classification:
-            classified_productivity = "distractive" if classification.category == "distractive" or classification.productivity == "distracting" else classification.category
-            if classified_productivity not in {"productive", "distractive", "neutral"}:
+        if classification is not None:
+            category = getattr(classification, "category", None)
+            productivity_value = getattr(classification, "productivity", None)
+            if category == "distractive" or productivity_value == "distracting":
+                classified_productivity = "distractive"
+            else:
+                classified_productivity = category
+            # ``uncertain`` keeps its own bucket. Folding it into neutral
+            # would convert "the evidence did not support a verdict" into
+            # "the activity was neither productive nor distractive", which
+            # is a different and unearned claim.
+            if classified_productivity not in {"productive", "distractive",
+                                               "neutral", "uncertain"}:
                 classified_productivity = "neutral"
         # Unclassified time is NEVER neutral: pending/failed/missing verdicts
         # aggregate into their own bucket so coverage gaps stay visible.
@@ -670,15 +746,17 @@ class NoemaService:
             "domain": event.domain,
             "productivity": productivity,
             "aggregation_productivity": productivity,
-            "confidence": classification.confidence if classification else 0.0,
-            "category": classification.category if classification else None,
-            "subcategory": classification.subcategory if classification else "ambiguous",
-            "activity_description": classification.activity if classification else "Ambiguous activity",
-            "signal": classification.signal if classification else "Classification unavailable",
-            "source": classification.source if classification else "none",
-            "classification_status": classification.classification_status if classification else "pending",
-            "evidence_quality": classification.evidence_quality if classification else None,
-            "evidence_quality_score": classification.evidence_quality_score if classification else None,
+            "confidence": getattr(classification, "confidence", 0.0) if classification else 0.0,
+            "category": getattr(classification, "category", None),
+            "subcategory": getattr(classification, "subcategory", None) or "ambiguous",
+            "activity_description": getattr(classification, "activity", None) or "Ambiguous activity",
+            "signal": getattr(classification, "signal", None) or "Classification unavailable",
+            "source": getattr(classification, "source", None) or "none",
+            "classification_status": getattr(classification, "classification_status", "pending") if classification else "pending",
+            "evidence_quality": getattr(classification, "evidence_quality", None),
+            "evidence_quality_score": getattr(classification, "evidence_quality_score", None),
+            "provenance": getattr(classification, "provenance", None),
+            "semantic_state": getattr(classification, "semantic_state", None),
         }
 
     def events_with_classifications(self, events: Iterable[Any]) -> list:
@@ -703,6 +781,13 @@ class NoemaService:
             payload["classification_status"] = "pending"
             session_id = event_session_ids.get(stored_event.event.event_key)
             classification = classifications.get(session_id)
+            # A direct row verdict still only describes the evidence it was
+            # formed from. An event outside that window is not covered by it.
+            if classification is not None and not classification.covers(
+                    stored_event.event.timestamp, stored_event.event.end_timestamp):
+                window = classification.evidence_window
+                if window is not None:
+                    classification = None
             if classification is not None:
                 payload.update({
                     "category": classification.category,
@@ -752,7 +837,13 @@ class NoemaService:
         return [item for item in rows if item.session_id in session_ids][:limit]
 
     @staticmethod
-    def _classification_payload(classification: Optional[Classification]) -> dict:
+    def _classification_payload(classification: Optional[Any]) -> dict:
+        """Render one resolved verdict, or an explicit absence of one.
+
+        Accepts a Classification or a SemanticSegment: both are verdicts
+        about a bounded window, and neither is read for fields it lacks.
+        """
+
         if classification is None:
             return {
                 "category": None,
@@ -760,21 +851,30 @@ class NoemaService:
                 "provider": None,
                 "model": None,
                 "source": None,
+                "evidence_window": None,
+                "provenance": None,
+                "semantic_state": None,
             }
+        classified_at = getattr(classification, "classified_at", None)
+        window = getattr(classification, "evidence_window", None)
         return {
-            "category": classification.category,
-            "status": classification.classification_status,
-            "provider": classification.provider,
-            "model": classification.model,
-            "source": classification.source,
-            "confidence": classification.confidence,
-            "topic": classification.topic,
-            "service": classification.service,
-            "activity_type": classification.activity_type,
-            "intent_signal": classification.intent_signal,
-            "evidence_quality": classification.evidence_quality,
-            "evidence_quality_score": classification.evidence_quality_score,
-            "classified_at": classification.classified_at.isoformat().replace("+00:00", "Z") if classification.classified_at else None,
+            "category": getattr(classification, "category", None),
+            "status": getattr(classification, "classification_status", "pending"),
+            "provider": getattr(classification, "provider", None),
+            "model": getattr(classification, "model", None),
+            "source": getattr(classification, "source", None),
+            "confidence": getattr(classification, "confidence", 0.0),
+            "topic": getattr(classification, "topic", None),
+            "service": getattr(classification, "service", None),
+            "activity_type": getattr(classification, "activity_type", None),
+            "intent_signal": getattr(classification, "intent_signal", None),
+            "evidence_quality": getattr(classification, "evidence_quality", None),
+            "evidence_quality_score": getattr(classification, "evidence_quality_score", None),
+            "classified_at": classified_at.isoformat().replace("+00:00", "Z") if classified_at else None,
+            "evidence_window": window.to_dict() if window else None,
+            "provenance": getattr(classification, "provenance", None),
+            "semantic_state": getattr(classification, "semantic_state", None),
+            "revision": getattr(classification, "revision", None),
         }
 
     def recent_activity(self, start: Any, end: Any, limit: int = 100) -> list:
@@ -796,22 +896,51 @@ class NoemaService:
             for session_id, item in self.store.query_classification_map(all_ids).items()
             if item.classification_status == "classified" and item.source != "heuristic"
         }
+        # Semantic subsegments for the episodes in view. A segment is a
+        # bounded stretch of coherent meaning inside an episode that kept
+        # its identity while its meaning changed.
+        segments_by_episode: dict = {}
+        for segment in self.store.query_semantic_segments(
+                episode_ids=list(dict.fromkeys(parent_of.values())), limit=100000):
+            segments_by_episode.setdefault(segment.episode_id, []).append(segment)
+        episodes_by_id = {item.id: item for item in self.store.query_meaningful_sessions(
+            start=start, end=end, limit=100000)}
+
         rows = []
         for session in sessions:
-            classification = classifications.get(session.id)
             # The meaningful episode this raw session belongs to (if any).
-            # Exposed on every row so the raw_session -> meaningful_episode ->
-            # classification lineage is always explicit and one episode verdict
-            # can never be mistaken for many independent AI judgments.
             meaningful_session_id = parent_of.get(session.id)
-            inherited_from = None
-            if classification is None:
-                classification = classifications.get(meaningful_session_id)
-                if classification is not None:
-                    # One episode verdict rendered on many raw rows: mark
-                    # the inheritance explicitly so the UI never implies
-                    # independent model decisions.
-                    inherited_from = meaningful_session_id
+            episode = episodes_by_id.get(meaningful_session_id)
+            # Resolution is temporal, not structural. The question is never
+            # "which episode owns this row?" but "whose evidence window
+            # contains this row?". A verdict formed from four minutes of
+            # evidence therefore cannot describe a row twenty minutes later,
+            # no matter what episode both belong to.
+            resolved = resolve_for_interval(
+                session.start, session.end,
+                episode_verdict=classifications.get(meaningful_session_id),
+                segments=segments_by_episode.get(meaningful_session_id, ()),
+                episode_id=meaningful_session_id,
+                # Freshness is judged against this row's own interval: a
+                # verdict that really covers 21:16-21:20 is a fresh claim
+                # about 21:18 even when the episode-level claim has aged.
+                unit_start=session.start,
+                unit_end=session.end,
+                unit_active_seconds=session.duration,
+                # The episode's extent bounds the legacy (windowless)
+                # fallback so a pre-V3 verdict still cannot escape its own
+                # episode.
+                episode_start=episode.start_time if episode is not None else None,
+                episode_end=episode.end_time if episode is not None else None,
+                direct_verdict=classifications.get(session.id),
+            )
+            classification = resolved.verdict
+            inherited_from = (
+                meaningful_session_id
+                if classification is not None
+                and resolved.provenance != Provenance.DIRECT.value
+                else None
+            )
             application_id, application = application_identity(session.app or session.browser, session.title)
             item = {
                 "id": session.id,
@@ -829,22 +958,40 @@ class NoemaService:
                 "window_id": session.browser_window_id,
                 "tab_id": session.browser_tab_id,
                 "classification": self._classification_payload(classification),
-                "category": classification.category if classification else None,
-                "productivity": classification.productivity if classification else None,
-                "confidence": classification.confidence if classification else 0.0,
-                "signal": classification.signal if classification else None,
-                "classification_status": classification.classification_status if classification else "pending",
-                "classification_source": classification.source if classification else None,
-                "service": classification.service if classification else None,
-                "topic": classification.topic if classification else None,
-                "activity_type": classification.activity_type if classification else None,
-                "intent_signal": classification.intent_signal if classification else None,
-                "evidence_quality": classification.evidence_quality if classification else None,
-                "evidence_quality_score": classification.evidence_quality_score if classification else None,
-                "provider": classification.provider if classification else None,
-                "model": classification.model if classification else None,
+                # A resolved verdict is either a Classification (the episode
+                # or a direct row verdict) or a SemanticSegment. Both answer
+                # the same questions; neither is read for fields it lacks.
+                "category": getattr(classification, "category", None),
+                "productivity": getattr(classification, "productivity", None),
+                "confidence": getattr(classification, "confidence", 0.0) if classification else 0.0,
+                "signal": getattr(classification, "signal", None),
+                "classification_status": getattr(classification, "classification_status", "pending") if classification else "pending",
+                "classification_source": getattr(classification, "source", None),
+                "service": getattr(classification, "service", None),
+                "topic": getattr(classification, "topic", None),
+                "activity_type": getattr(classification, "activity_type", None),
+                "intent_signal": getattr(classification, "intent_signal", None),
+                "evidence_quality": getattr(classification, "evidence_quality", None),
+                "evidence_quality_score": getattr(classification, "evidence_quality_score", None),
+                "provider": getattr(classification, "provider", None),
+                "model": getattr(classification, "model", None),
                 "inherited_from": inherited_from,
                 "meaningful_session_id": meaningful_session_id,
+                # Provenance is part of the reading, never decoration. A row
+                # must never look like an independent judgment when it is an
+                # episode verdict being shown inside its own window.
+                "provenance": resolved.provenance if classification is not None else None,
+                "freshness": resolved.freshness if classification is not None else None,
+                "presentable_as_current": resolved.presentable_as_current,
+                "segment_id": resolved.segment_id,
+                "evidence_window": (
+                    classification.evidence_window.to_dict()
+                    if classification is not None
+                    and getattr(classification, "evidence_window", None) else None
+                ),
+                "semantic_state": getattr(classification, "semantic_state", None) if classification else None,
+                "revision": getattr(classification, "revision", None) if classification else None,
+                "lineage_reason": resolved.reason,
             }
             rows.append(item)
         rows.sort(key=lambda item: (item["timestamp"], item["id"]), reverse=True)
@@ -865,17 +1012,32 @@ class NoemaService:
         if session_id:
             found = self.store.query_classifications(session_id=session_id, limit=1)
             classification = found[0] if found and found[0].classification_status == "classified" and found[0].source != "heuristic" else None
+        resolved = None
         if classification is None and session_id:
             for meaningful in self.store.query_meaningful_sessions(
                 start=event.timestamp - timedelta(days=7),
                 end=event.end_timestamp + timedelta(seconds=2),
                 limit=100000,
             ):
-                if session_id in meaningful.activity_session_ids:
-                    found = self.store.query_classifications(session_id=meaningful.id, limit=1)
-                    if found and found[0].classification_status == "classified" and found[0].source != "heuristic":
-                        classification = found[0]
-                    break
+                if session_id not in meaningful.activity_session_ids:
+                    continue
+                found = self.store.query_classifications(session_id=meaningful.id, limit=1)
+                parent = found[0] if found and found[0].is_verdict else None
+                # The live "what am I doing now" card is the most dangerous
+                # place to show a stale verdict: it is read as a statement
+                # about this instant. It gets the same temporal rule as
+                # every other surface.
+                resolved = resolve_for_interval(
+                    event.timestamp, event.end_timestamp,
+                    episode_verdict=parent,
+                    segments=self.store.query_semantic_segments(
+                        episode_id=meaningful.id, limit=1000),
+                    episode_id=meaningful.id,
+                    unit_start=event.timestamp, unit_end=event.end_timestamp,
+                    episode_start=meaningful.start_time, episode_end=meaningful.end_time,
+                )
+                classification = resolved.verdict
+                break
         application_id, application = application_identity(event.app or event.browser, event.title)
         age = max(0.0, (current - event.end_timestamp).total_seconds())
         return {
@@ -895,6 +1057,13 @@ class NoemaService:
             "telemetry_status": "live" if age <= 10 else "stale",
             "telemetry_age_seconds": round(age, 3),
             "classification": self._classification_payload(classification),
+            "provenance": resolved.provenance if resolved and classification is not None else (
+                Provenance.DIRECT.value if classification is not None else None),
+            "freshness": resolved.freshness if resolved and classification is not None else None,
+            "presentable_as_current": (
+                resolved.presentable_as_current if resolved is not None
+                else classification is not None),
+            "lineage_reason": resolved.reason if resolved is not None else None,
         }
 
     def provider_quotas(self) -> dict:
@@ -1226,8 +1395,20 @@ class NoemaService:
         now: datetime,
         classifier_version: str,
         max_retries: int,
+        session: Optional[Any] = None,
+        observations: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> bool:
-        """Whether one stored row still needs (re)classification work."""
+        """Whether one stored row still needs (re)classification work.
+
+        A classified row is not automatically finished. It is finished only
+        while its evidence window still describes the unit. When ``session``
+        is supplied, Stage A compares the stored verdict's evidence against
+        the unit's current evidence and re-opens the row when the difference
+        is material. Without that check a verdict formed in the first minute
+        of an episode would keep describing the episode forever, which is
+        precisely how one four-minute judgment came to speak for twenty
+        minutes of unrelated activity.
+        """
 
         if existing is None:
             return True
@@ -1237,7 +1418,42 @@ class NoemaService:
             and existing.source != "heuristic"
             and version == classifier_version
         ):
-            return False
+            if session is None:
+                return False
+            # Fast path: when the stored verdict's evidence window already
+            # spans the unit's whole extent, there is provably no evidence
+            # outside it, so no observations need loading at all. This is a
+            # timestamp comparison, and it keeps a large already-classified
+            # backlog from issuing one store query per episode on every
+            # scheduler tick.
+            window = getattr(existing, "evidence_window", None)
+            if window is not None:
+                try:
+                    unit_start = coerce_timestamp(
+                        getattr(session, "start_time", None) or getattr(session, "start"))
+                    unit_end = coerce_timestamp(
+                        getattr(session, "end_time", None) or getattr(session, "end"))
+                except (AttributeError, TypeError, ValueError):
+                    unit_start = unit_end = None
+                if (unit_start is not None
+                        and window.start <= unit_start and unit_end <= window.end):
+                    return False
+            bundle = bundle_for_episode(session, observations)
+            decision = self.revision_planner.plan(bundle, existing)
+            if decision.model_called:
+                # Carried forward so the classification step reuses Stage A's
+                # reasoning instead of recomputing it.
+                self._last_revision_decisions[bundle.episode_id] = decision
+            else:
+                # Record the negative too. "Why did Noema NOT call the model
+                # here?" has to be answerable from telemetry alone, and a
+                # skipped call logs nowhere else — the classification step
+                # never runs for this episode.
+                if decision.extend_to is not None:
+                    self._pending_window_extensions.append(
+                        (existing, decision.extend_to, decision.reason))
+                self._record_revision_decision(bundle.episode_id, decision, bundle)
+            return decision.model_called
         if existing.retry_count >= max(1, int(max_retries)) and version == classifier_version:
             return False
         upcoming = getattr(existing, "next_retry_at", None)
@@ -1270,6 +1486,7 @@ class NoemaService:
         now: Optional[Any] = None,
         classifier_version: str = CLASSIFIER_VERSION_DEFAULT,
         max_retries: int = CLASSIFICATION_RETRIES_MAX,
+        context_by_session: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
     ) -> list:
         """Filter candidate sessions down to work the scheduler should do now.
 
@@ -1284,10 +1501,81 @@ class NoemaService:
         current = coerce_timestamp(now) if now is not None else datetime.now(timezone.utc)
         candidates = list(sessions)
         stored = self.store.query_classification_map([item.id for item in candidates])
+        contexts = dict(context_by_session or {})
+        self._last_revision_decisions = {}
+        self._pending_window_extensions = []
+        eligible = []
+        for item in candidates:
+            if self._is_afk_only(item):
+                continue
+            observations = contexts.get(item.id)
+            if observations is None:
+                # Not supplied by the caller: resolve it. The fast path in
+                # ``_is_eligible`` means this only runs for units whose
+                # extent actually outgrew their verdict's window.
+                observations = self._observations_for(item)
+            if self._is_eligible(stored.get(item.id), current, classifier_version,
+                                 max_retries, session=item, observations=observations):
+                eligible.append(item)
+        self._apply_window_extensions()
+        return eligible
+
+    def _apply_window_extensions(self) -> int:
+        """Persist verdict windows widened by a verified continuity check.
+
+        Costs no model quota: the verdict itself is unchanged, only the
+        scope it is recorded as describing, plus provenance saying the
+        model was not re-asked.
+        """
+
+        extensions = list(getattr(self, "_pending_window_extensions", ()) or ())
+        self._pending_window_extensions = []
+        if not extensions:
+            return 0
+        widened = [extend_window(verdict, window, reason)
+                   for verdict, window, reason in extensions]
+        try:
+            self.store.insert_classifications(widened)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return 0
+        return len(widened)
+
+    def _observations_for(self, episode: Any) -> list:
+        """Rebuild an episode's raw observations for evidence comparison.
+
+        Stage A needs the same member rows the classifier would be shown.
+        Callers that already have them pass them in; this is the fallback
+        for callers that do not.
+        """
+
+        member_ids = list(getattr(episode, "activity_session_ids", ()) or ())
+        if not member_ids:
+            return []
+        try:
+            rows = self.store.query_sessions(
+                start=getattr(episode, "start_time", None),
+                end=getattr(episode, "end_time", None),
+                limit=100000,
+            )
+        except (AttributeError, OSError, TypeError, ValueError):
+            return []
+        wanted = set(member_ids)
         return [
-            item for item in candidates
-            if not self._is_afk_only(item)
-            and self._is_eligible(stored.get(item.id), current, classifier_version, max_retries)
+            {
+                "session_id": row.id,
+                "application": row.app,
+                "title": row.title,
+                "domain": row.domain,
+                "url": row.url,
+                "start": row.start,
+                "end": row.end,
+                "timestamp": row.start,
+                "duration_seconds": row.duration,
+                "device": row.device,
+                "browser": row.browser,
+                "event_count": row.event_count,
+            }
+            for row in rows if row.id in wanted
         ]
 
     def presence_snapshot(self, now: Optional[Any] = None) -> dict:
@@ -2503,20 +2791,113 @@ class NoemaService:
         now = datetime.now(timezone.utc)
         request_id = new_request_id()
         stored = self.store.query_classification_map([item.id for item in ordered])
-        classifications = [
-            self._apply_retry_accounting(result, stored.get(result.session_id), now, classifier_version, max_retries)
+        contexts = dict(context_by_session or {})
+        episodes_by_id = {item.id: item for item in ordered}
+        raw_results = [
+            self._apply_retry_accounting(result, stored.get(result.session_id), now,
+                                         classifier_version, max_retries)
             for result in self.classifier.classify_many(
                 ordered,
                 context_by_session=context_by_session,
                 telemetry={"request_id": request_id},
             )
         ]
+
+        # Bind every result to the evidence it was formed from, and fold it
+        # into the unit's revision lineage. A verdict that reaches storage
+        # without a window would be a claim of unbounded scope, which is the
+        # defect this release removes.
+        classifications = []
+        segments_to_write: list = []
+        revisions_to_write: list = []
+        for result in raw_results:
+            episode = episodes_by_id.get(result.session_id)
+            if episode is None:
+                classifications.append(result)
+                continue
+            observations = contexts.get(result.session_id)
+            if observations is None:
+                observations = self._observations_for(episode)
+            bundle = bundle_for_episode(episode, observations)
+            previous = stored.get(result.session_id)
+            decision = self._last_revision_decisions.get(result.session_id)
+            if decision is None:
+                decision = self.revision_planner.plan(bundle, previous)
+            existing_segments = self.store.query_semantic_segments(
+                episode_id=result.session_id, limit=1000)
+            final, completed = self.revision_planner.apply(
+                bundle, previous, decision, result, existing_segments)
+            classifications.append(final)
+            if completed.segments:
+                segments_to_write.extend(completed.segments)
+            if getattr(final, "is_verdict", False):
+                revisions_to_write.append(final)
+            self._record_revision_decision(result.session_id, completed, bundle)
+
         if persist:
             with self._observe_db("classification_write",
                                   metadata={"request_id": request_id}) as state:
                 self.store.insert_classifications(classifications)
                 state["rows_affected"] = len(classifications)
+            for verdict in revisions_to_write:
+                try:
+                    self.store.record_classification_revision(verdict)
+                except (AttributeError, OSError, TypeError, ValueError):
+                    # Lineage history is observability, never a reason to
+                    # lose the verdict itself.
+                    pass
+            if segments_to_write:
+                try:
+                    self.store.insert_semantic_segments(segments_to_write)
+                except (AttributeError, OSError, TypeError, ValueError):
+                    pass
+        self._last_revision_decisions = {}
         return classifications
+
+    def _record_revision_decision(self, episode_id: str, decision: Any,
+                                  bundle: Any = None) -> dict:
+        """Record why the model was, or was not, invoked for one episode."""
+
+        def _emit(record: dict) -> None:
+            telemetry = self.telemetry
+            if telemetry is not None and hasattr(telemetry, "record_event"):
+                telemetry.record_event("semantic_revision", record)
+
+        record = log_decision(_emit, episode_id, decision, bundle)
+        self._revision_log.append(record)
+        del self._revision_log[:-200]
+        return record
+
+    def revision_decisions(self, limit: int = 50) -> list:
+        """Recent Stage A / Stage B decisions, newest first.
+
+        Exposed so "why did Noema call the model here?" and "why did it not?"
+        are answerable without reading source or re-running the pipeline.
+        """
+
+        return list(reversed(self._revision_log))[:max(1, int(limit))]
+
+    def semantic_segments(self, episode_id: Optional[str] = None,
+                          start: Optional[Any] = None,
+                          end: Optional[Any] = None,
+                          limit: int = 1000) -> list:
+        """Semantic subsegments for an episode or a time window."""
+
+        return self.store.query_semantic_segments(
+            episode_id=episode_id, start=start, end=end, limit=limit)
+
+    def classification_lineage(self, session_id: str) -> dict:
+        """Full provenance answer for one semantic unit."""
+
+        stored = self.store.query_classifications(session_id=session_id, limit=1)
+        current = stored[0] if stored else None
+        return {
+            "session_id": session_id,
+            "current": current.to_dict() if current else None,
+            "revisions": self.store.query_classification_revisions(session_id, limit=100),
+            "segments": [item.to_dict() for item in
+                         self.store.query_semantic_segments(episode_id=session_id, limit=1000)],
+        }
 
     def classify_stored_meaningful_sessions(
         self,

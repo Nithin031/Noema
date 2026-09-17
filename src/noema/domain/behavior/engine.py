@@ -37,6 +37,12 @@ class BehaviorEngine:
         if classification is not None and getattr(
                 classification, "classification_status", None) != "classified":
             classification = None
+        # Uncertainty is not distraction and not focus. A verdict that
+        # declined to judge cannot be read as a behavioral state, so it is
+        # invisible here too — the session falls through to NORMAL/IDLE on
+        # its observable shape alone.
+        if classification is not None and getattr(classification, "is_uncertain", False):
+            classification = None
         category = classification.category if classification else ""
         activity_type = classification.activity_type if classification else ""
         productivity = classification.productivity if classification else ""
@@ -93,6 +99,19 @@ class BehaviorEngine:
                 # Pending/failed rows are not semantic evidence, anywhere
                 # in this evaluation (state, score, and confidence alike).
                 classification = None
+            if classification is not None and getattr(
+                    classification, "is_uncertain", False):
+                classification = None
+            # A verdict only describes the evidence it was formed from.
+            # Reading one over a session it never observed would let a
+            # stale judgment drive a behavior state and, downstream, an
+            # intervention.
+            if classification is not None:
+                covers = getattr(classification, "covers", None)
+                window = getattr(classification, "evidence_window", None)
+                if callable(covers) and window is not None and not covers(
+                        session.start, session.end):
+                    classification = None
             alignment = alignments.get(session.id)
             previous_state = previous.state if previous else None
             state = self._candidate(session, classification, alignment, previous_state)

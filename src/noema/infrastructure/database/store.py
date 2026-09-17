@@ -22,6 +22,24 @@ from noema.domain.intent import AlignmentResult, Intent
 from noema.domain.sessions.models import ActivitySession
 
 
+def _column(row: Any, name: str, default: Any = None) -> Any:
+    """Read one column, tolerating databases migrated at different times.
+
+    Older files may lack a V3 column entirely. Returning the default rather
+    than raising keeps a pre-V3 database readable; a missing evidence window
+    then correctly reads as "scope unrecorded".
+    """
+
+    try:
+        if name not in row.keys():
+            return default
+    except AttributeError:
+        return default
+    value = row[name]
+    return default if value is None else value
+
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS normalized_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,8 +111,86 @@ CREATE TABLE IF NOT EXISTS semantic_classifications (
     next_retry_at TEXT,
     classifier_version TEXT NOT NULL DEFAULT '1',
     prompt_version TEXT NOT NULL DEFAULT '1',
+    -- V3: the bounded evidence window this verdict is a claim about. A row
+    -- without one has unrecorded scope and is treated as stale, never as
+    -- covering everything.
+    evidence_start TEXT,
+    evidence_end TEXT,
+    evidence_digest TEXT,
+    evidence_observation_count INTEGER NOT NULL DEFAULT 0,
+    evidence_active_seconds REAL NOT NULL DEFAULT 0,
+    -- V3: how the verdict came to be attached, and its revision lineage.
+    provenance TEXT NOT NULL DEFAULT 'direct',
+    parent_classification_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    semantic_state TEXT NOT NULL DEFAULT 'unknown',
+    superseded_at TEXT,
+    revision_reason TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- V3: append-only revision history. ``semantic_classifications`` is a
+-- destructive upsert keyed by session_id, so without this table a revision
+-- would erase the verdict it replaced and the lineage would be unauditable.
+CREATE TABLE IF NOT EXISTS classification_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    productivity TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    evidence_start TEXT,
+    evidence_end TEXT,
+    evidence_digest TEXT,
+    provenance TEXT NOT NULL DEFAULT 'direct',
+    semantic_state TEXT NOT NULL DEFAULT 'unknown',
+    revision_reason TEXT,
+    provider TEXT,
+    model TEXT,
+    prompt_version TEXT,
+    classifier_version TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_classification_revisions_session
+    ON classification_revisions(session_id);
+-- V3: semantic subsegments. An episode keeps its identity and temporal
+-- continuity; a semantic change inside it becomes a bounded segment with
+-- its own verdict and its own evidence window, rather than destroying the
+-- episode or restamping the whole span.
+CREATE TABLE IF NOT EXISTS semantic_segments (
+    id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'uncertain',
+    productivity TEXT NOT NULL DEFAULT 'neutral',
+    confidence REAL NOT NULL DEFAULT 0,
+    activity TEXT,
+    signal TEXT,
+    topic TEXT,
+    activity_type TEXT,
+    evidence_quality TEXT,
+    evidence_start TEXT,
+    evidence_end TEXT,
+    evidence_digest TEXT,
+    evidence_observation_count INTEGER NOT NULL DEFAULT 0,
+    evidence_active_seconds REAL NOT NULL DEFAULT 0,
+    provenance TEXT NOT NULL DEFAULT 'direct',
+    semantic_state TEXT NOT NULL DEFAULT 'unknown',
+    classification_status TEXT NOT NULL DEFAULT 'pending',
+    activity_session_ids_json TEXT NOT NULL DEFAULT '[]',
+    provider TEXT,
+    model TEXT,
+    prompt_version TEXT,
+    classifier_version TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(episode_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_semantic_segments_episode
+    ON semantic_segments(episode_id);
+CREATE INDEX IF NOT EXISTS idx_semantic_segments_time
+    ON semantic_segments(start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_semantic_classifications_category
     ON semantic_classifications(category);
 CREATE INDEX IF NOT EXISTS idx_semantic_classifications_productivity
@@ -527,6 +623,21 @@ class SQLiteStore:
                 "prompt_version": "TEXT NOT NULL DEFAULT '1'",
                 "evidence_quality": "TEXT",
                 "evidence_quality_score": "REAL",
+                # V3 evidence-bounded verdicts. Existing rows get NULL
+                # windows on purpose: their scope was never recorded, and
+                # inventing one would license exactly the fan-out this
+                # release removes. A NULL window reads as stale.
+                "evidence_start": "TEXT",
+                "evidence_end": "TEXT",
+                "evidence_digest": "TEXT",
+                "evidence_observation_count": "INTEGER NOT NULL DEFAULT 0",
+                "evidence_active_seconds": "REAL NOT NULL DEFAULT 0",
+                "provenance": "TEXT NOT NULL DEFAULT 'direct'",
+                "parent_classification_id": "TEXT",
+                "revision": "INTEGER NOT NULL DEFAULT 1",
+                "semantic_state": "TEXT NOT NULL DEFAULT 'unknown'",
+                "superseded_at": "TEXT",
+                "revision_reason": "TEXT",
             },
             "meaningful_sessions": {
                 "browser": "TEXT",
@@ -1144,6 +1255,17 @@ class SQLiteStore:
             str(getattr(classification, "prompt_version", "1") or "1"),
             getattr(classification, "evidence_quality", None),
             getattr(classification, "evidence_quality_score", None),
+            classification.evidence_start.isoformat().replace("+00:00", "Z") if classification.evidence_start else None,
+            classification.evidence_end.isoformat().replace("+00:00", "Z") if classification.evidence_end else None,
+            getattr(classification, "evidence_digest", None),
+            int(getattr(classification, "evidence_observation_count", 0) or 0),
+            float(getattr(classification, "evidence_active_seconds", 0.0) or 0.0),
+            str(getattr(classification, "provenance", "direct") or "direct"),
+            getattr(classification, "parent_classification_id", None),
+            int(getattr(classification, "revision", 1) or 1),
+            str(getattr(classification, "semantic_state", "unknown") or "unknown"),
+            classification.superseded_at.isoformat().replace("+00:00", "Z") if classification.superseded_at else None,
+            getattr(classification, "revision_reason", None),
             classification.classified_at.isoformat().replace("+00:00", "Z") if classification.classified_at else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         )
         with self._lock:
@@ -1158,8 +1280,11 @@ class SQLiteStore:
                 confidence, provider, model, subcategory, activity, signal, source,
                 classification_status, service, intent_signal, retry_count,
                 last_error, next_retry_at, classifier_version, prompt_version, evidence_quality,
-                evidence_quality_score, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                evidence_quality_score, evidence_start, evidence_end, evidence_digest,
+                evidence_observation_count, evidence_active_seconds, provenance,
+                parent_classification_id, revision, semantic_state, superseded_at,
+                revision_reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     category = excluded.category,
                     topic = excluded.topic,
@@ -1183,11 +1308,191 @@ class SQLiteStore:
                     prompt_version = excluded.prompt_version,
                     evidence_quality = excluded.evidence_quality,
                     evidence_quality_score = excluded.evidence_quality_score,
+                    evidence_start = excluded.evidence_start,
+                    evidence_end = excluded.evidence_end,
+                    evidence_digest = excluded.evidence_digest,
+                    evidence_observation_count = excluded.evidence_observation_count,
+                    evidence_active_seconds = excluded.evidence_active_seconds,
+                    provenance = excluded.provenance,
+                    parent_classification_id = excluded.parent_classification_id,
+                    revision = excluded.revision,
+                    semantic_state = excluded.semantic_state,
+                    superseded_at = excluded.superseded_at,
+                    revision_reason = excluded.revision_reason,
                     created_at = excluded.created_at
                 """,
                 values,
             )
         return not existed
+
+    # -- V3: semantic segments and revision lineage -----------------------
+
+    def insert_semantic_segments(self, segments: Iterable[Any]) -> int:
+        """Replace an episode's segment set atomically.
+
+        Segments are derived state: recomputing an episode's segmentation
+        must not leave orphaned older segments behind, or a row could
+        resolve against a segment that no longer describes anything.
+        """
+
+        items = list(segments)
+        if not items:
+            return 0
+        written = 0
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                for episode_id in dict.fromkeys(str(item.episode_id) for item in items):
+                    self._connection.execute(
+                        "DELETE FROM semantic_segments WHERE episode_id = ?", (episode_id,))
+                for segment in items:
+                    self._connection.execute(
+                        """
+                        INSERT INTO semantic_segments
+                        (id, episode_id, sequence, start_time, end_time, category,
+                         productivity, confidence, activity, signal, topic, activity_type,
+                         evidence_quality, evidence_start, evidence_end, evidence_digest,
+                         evidence_observation_count, evidence_active_seconds, provenance,
+                         semantic_state, classification_status, activity_session_ids_json,
+                         provider, model, prompt_version, classifier_version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            segment.id, segment.episode_id, segment.sequence,
+                            segment.start_time.isoformat().replace("+00:00", "Z"),
+                            segment.end_time.isoformat().replace("+00:00", "Z"),
+                            segment.category, segment.productivity, segment.confidence,
+                            segment.activity, segment.signal, segment.topic,
+                            segment.activity_type, segment.evidence_quality,
+                            segment.evidence_start.isoformat().replace("+00:00", "Z") if segment.evidence_start else None,
+                            segment.evidence_end.isoformat().replace("+00:00", "Z") if segment.evidence_end else None,
+                            segment.evidence_digest,
+                            segment.evidence_observation_count,
+                            segment.evidence_active_seconds,
+                            segment.provenance, segment.semantic_state,
+                            segment.classification_status,
+                            json.dumps(list(segment.activity_session_ids)),
+                            segment.provider, segment.model,
+                            segment.prompt_version, segment.classifier_version,
+                        ),
+                    )
+                    written += 1
+                self._connection.execute("COMMIT")
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+        return written
+
+    @staticmethod
+    def _row_to_segment(row: sqlite3.Row) -> Any:
+        from noema.domain.semantic import SemanticSegment
+
+        return SemanticSegment(
+            episode_id=row["episode_id"], sequence=row["sequence"],
+            start_time=row["start_time"], end_time=row["end_time"],
+            category=row["category"], productivity=row["productivity"],
+            confidence=row["confidence"], activity=row["activity"],
+            signal=row["signal"], topic=row["topic"],
+            activity_type=row["activity_type"],
+            evidence_quality=row["evidence_quality"],
+            evidence_start=row["evidence_start"], evidence_end=row["evidence_end"],
+            evidence_digest=row["evidence_digest"],
+            evidence_observation_count=row["evidence_observation_count"] or 0,
+            evidence_active_seconds=row["evidence_active_seconds"] or 0.0,
+            provenance=row["provenance"], semantic_state=row["semantic_state"],
+            classification_status=row["classification_status"],
+            activity_session_ids=tuple(json.loads(row["activity_session_ids_json"] or "[]")),
+            provider=row["provider"], model=row["model"],
+            prompt_version=row["prompt_version"],
+            classifier_version=row["classifier_version"],
+            segment_id=row["id"],
+        )
+
+    def query_semantic_segments(
+        self,
+        episode_id: Optional[str] = None,
+        episode_ids: Optional[Iterable[str]] = None,
+        start: Optional[Any] = None,
+        end: Optional[Any] = None,
+        limit: int = 10000,
+    ) -> List[Any]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        clauses: List[str] = []
+        parameters: List[Any] = []
+        if episode_id:
+            clauses.append("episode_id = ?")
+            parameters.append(str(episode_id))
+        ids = [str(item) for item in dict.fromkeys(episode_ids or ())]
+        if ids:
+            clauses.append("episode_id IN ({})".format(",".join("?" for _ in ids)))
+            parameters.extend(ids)
+        if start is not None:
+            clauses.append("end_time > ?")
+            parameters.append(coerce_timestamp(start).isoformat().replace("+00:00", "Z"))
+        if end is not None:
+            clauses.append("start_time < ?")
+            parameters.append(coerce_timestamp(end).isoformat().replace("+00:00", "Z"))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        query = ("SELECT * FROM semantic_segments{} ORDER BY start_time ASC, sequence ASC "
+                 "LIMIT ?".format(where))
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return [self._row_to_segment(row) for row in rows]
+
+    def record_classification_revision(self, classification: Classification) -> bool:
+        """Append one immutable entry to a verdict's revision history.
+
+        ``semantic_classifications`` is a destructive upsert keyed by
+        session_id, so a revision would otherwise erase the verdict it
+        replaced and make the lineage unauditable.
+        """
+
+        if not isinstance(classification, Classification):
+            raise TypeError("SQLiteStore expects Classification instances")
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                INSERT OR IGNORE INTO classification_revisions
+                (session_id, revision, category, productivity, confidence,
+                 evidence_start, evidence_end, evidence_digest, provenance,
+                 semantic_state, revision_reason, provider, model,
+                 prompt_version, classifier_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    classification.session_id, classification.revision,
+                    classification.category, classification.productivity,
+                    classification.confidence,
+                    classification.evidence_start.isoformat().replace("+00:00", "Z") if classification.evidence_start else None,
+                    classification.evidence_end.isoformat().replace("+00:00", "Z") if classification.evidence_end else None,
+                    classification.evidence_digest, classification.provenance,
+                    classification.semantic_state, classification.revision_reason,
+                    classification.provider, classification.model,
+                    classification.prompt_version, classification.classifier_version,
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def query_classification_revisions(
+        self,
+        session_id: str,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Full revision lineage for one semantic unit, oldest first."""
+
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM classification_revisions
+                WHERE session_id = ? ORDER BY revision ASC LIMIT ?
+                """,
+                (str(session_id), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def insert_classifications(self, classifications: Iterable[Classification]) -> int:
         created = 0
@@ -1231,6 +1536,17 @@ class SQLiteStore:
             prompt_version=(row["prompt_version"] if "prompt_version" in row.keys() and row["prompt_version"] else "1"),
             evidence_quality=row["evidence_quality"] if "evidence_quality" in row.keys() else None,
             evidence_quality_score=row["evidence_quality_score"] if "evidence_quality_score" in row.keys() else None,
+            evidence_start=_column(row, "evidence_start"),
+            evidence_end=_column(row, "evidence_end"),
+            evidence_digest=_column(row, "evidence_digest"),
+            evidence_observation_count=_column(row, "evidence_observation_count", 0) or 0,
+            evidence_active_seconds=_column(row, "evidence_active_seconds", 0.0) or 0.0,
+            provenance=_column(row, "provenance", "direct") or "direct",
+            parent_classification_id=_column(row, "parent_classification_id"),
+            revision=_column(row, "revision", 1) or 1,
+            semantic_state=_column(row, "semantic_state", "unknown") or "unknown",
+            superseded_at=_column(row, "superseded_at"),
+            revision_reason=_column(row, "revision_reason"),
         )
 
     def query_classifications(

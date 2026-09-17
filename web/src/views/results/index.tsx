@@ -2,6 +2,36 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, BrainCircuit, CheckCircle2, Gauge, Play, RefreshCw, ShieldCheck, TriangleAlert, Zap } from 'lucide-react';
 import { api, type Belief, type BenchmarkRunInfo, type ClassificationStatus, type Detection, type FastCheck, type FeedbackQuality, type MeaningfulVerdict, type ModelPerfRow, type QuotaPayload, type QuotaRow, type RealtimeMetrics, type RealtimeStatus, type ResultRow, type TokenWindows } from '../../api/noema';
 
+
+// V3 lineage rendering. Three rules, all of them about not overclaiming:
+//   * a row with no verdict shows "—", never 0%;
+//   * an inherited verdict is labelled EPISODE, never presented as its own
+//     independent judgment;
+//   * a verdict whose evidence no longer describes the row is labelled
+//     STALE and never shown as current.
+function provenanceLabel(row: {
+  category?: string | null;
+  classification_status?: string;
+  provenance?: string | null;
+  freshness?: string | null;
+  segment_id?: string | null;
+}): string {
+  if (!row.category) return row.classification_status === 'classification_failed' ? 'FAILED' : 'PENDING';
+  if (row.freshness === 'invalidated') return 'SUPERSEDED';
+  if (row.freshness === 'stale') return 'STALE';
+  if (row.segment_id) return 'SEGMENT';
+  if (row.provenance === 'inherited') return 'EPISODE';
+  if (row.provenance === 'reclassified') return 'REVISED';
+  if (row.provenance === 'reused') return 'REUSED';
+  return 'CLASSIFIED';
+}
+
+function windowLabel(row: { evidence_window?: { start?: string; end?: string } | null }): string {
+  const w = row.evidence_window;
+  if (!w?.start || !w?.end) return 'scope unrecorded';
+  return `evidence ${w.start.slice(11, 16)}–${w.end.slice(11, 16)}`;
+}
+
 function fmtMs(value?: number | null): string {
   if (value == null || !Number.isFinite(value)) return 'n<5';
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
@@ -279,8 +309,8 @@ export default function ResultsPage() {
         </section>
 
         <section className="panel"><div className="panel-title"><div><div className="kicker">LIVE RESULTS · LAST 24H</div><h2>Raw rows (evidence, not verdicts)</h2></div><span className="last-updated">{classified.length} classified</span></div>
-          <div className="activity-table"><div className="table-head"><span>TIME</span><span>APPLICATION</span><span>DOMAIN / TITLE</span><span>VERDICT</span><span>SOURCE</span><span>CONFIDENCE</span></div>
-            {results.map((row, index) => <div className="table-row" key={`${row.session_id || row.id}-${index}`}><span>{row.timestamp ? row.timestamp.slice(11, 16) : '—'}</span><strong>{str(row.application)}</strong><span>{str(row.domain || row.title)}</span><span className="category-text">{str(row.category, row.classification_status)}{row.inherited_from ? ' · inherited' : ''}</span><span>{str(row.classification_source)}{row.evidence_quality ? ` · ${str(row.evidence_quality)}` : ''}</span><span><i className="table-signal" />{Math.round(num(row.confidence) * 100)}%</span></div>)}
+          <div className="activity-table"><div className="table-head"><span>TIME</span><span>APPLICATION</span><span>DOMAIN / TITLE</span><span>VERDICT</span><span>PROVENANCE</span><span>CONFIDENCE</span></div>
+            {results.map((row, index) => <div className="table-row" key={`${row.session_id || row.id}-${index}`} title={row.lineage_reason || undefined}><span>{row.timestamp ? row.timestamp.slice(11, 16) : '—'}</span><strong>{str(row.application)}</strong><span>{str(row.domain || row.title)}</span><span className="category-text">{row.category ? str(row.category) : '—'}</span><span>{provenanceLabel(row)}{row.evidence_quality ? ` · ${str(row.evidence_quality)}` : ''}<small> · {windowLabel(row)}</small></span><span>{row.category ? <><i className="table-signal" />{Math.round(num(row.confidence) * 100)}%</> : '—'}</span></div>)}
             {!results.length && <div className="empty">No activity in the last 24 hours.</div>}
           </div>
         </section>

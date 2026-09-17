@@ -15,6 +15,7 @@ from noema.application.classification import Classification
 from noema.domain.intent import Intent
 from noema.domain.session_context import browser_target, session_label
 from noema.domain.sessions import ActivitySession
+from noema.domain.semantic import is_presentable_as_current
 
 
 class InterventionMode(str, Enum):
@@ -239,6 +240,43 @@ class InterventionEngine:
             return self._skipped(observation.session_id, "behavior state is not DISTRACTED", now)
         if self.policy.require_actionable and not observation.actionable:
             return self._skipped(observation.session_id, "distraction is below actionability threshold", now)
+        # --- semantic safety gates (V3) ----------------------------------
+        # A bad classification must not become a bad intervention. These
+        # gates are deliberately upstream of severity and copy: nothing
+        # below can resurrect a verdict rejected here.
+        if classification is not None:
+            if getattr(classification, "classification_status", "classified") != "classified":
+                # A pending or failed classification is not a judgment.
+                # Interrupting someone on the strength of a provider outage
+                # is the worst possible failure mode.
+                return self._skipped(
+                    observation.session_id,
+                    "classification is {}; not a verdict".format(
+                        classification.classification_status), now)
+            if getattr(classification, "is_uncertain", False):
+                # Uncertain is an honest answer, never grounds to interrupt.
+                return self._skipped(
+                    observation.session_id,
+                    "semantic state is uncertain; interventions require a verdict", now)
+            freshness = getattr(classification, "freshness_for", None)
+            if callable(freshness):
+                current = freshness(session.start, session.end,
+                                    unit_active_seconds=getattr(session, "duration", None),
+                                    now=now)
+                if not is_presentable_as_current(current):
+                    # Acting on a verdict whose evidence no longer describes
+                    # the session means interrupting over what someone was
+                    # doing earlier, not what they are doing now.
+                    return self._skipped(
+                        observation.session_id,
+                        "classification is {} for this session; "
+                        "interventions require a current verdict".format(current), now)
+            quality = str(getattr(classification, "evidence_quality", "") or "").strip().lower()
+            if quality in {"absent", "weak"}:
+                return self._skipped(
+                    observation.session_id,
+                    "evidence quality is {!r}; too thin to interrupt over".format(quality),
+                    now)
         cooldown = timedelta(seconds=self.policy.cooldown_seconds)
         for item in recent:
             if item.status in {InterventionStatus.PLANNED, InterventionStatus.EXECUTED} and item.created_at >= now - cooldown:

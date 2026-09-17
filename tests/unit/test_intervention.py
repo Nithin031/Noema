@@ -46,6 +46,19 @@ def context():
         activity_type="browsing",
         productivity="distracting",
         confidence=.9,
+        classification_status="classified",
+        provider="gemini",
+        model="gemini-test",
+        source="gemini",
+        evidence_quality="strong",
+        # A V3 verdict always records the evidence window it describes.
+        # Interventions require a verdict that provably covers the session
+        # they would interrupt, so policy fixtures carry a real one.
+        evidence_start=session.start,
+        evidence_end=session.end,
+        evidence_digest="fixture",
+        evidence_observation_count=3,
+        evidence_active_seconds=session.duration,
     )
     return session, observation, intent, classification
 

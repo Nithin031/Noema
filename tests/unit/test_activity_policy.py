@@ -1,6 +1,8 @@
 """Activity policy, evidence, and prompt-contract tests (spec 1-21, 47-48)."""
 
 from noema.application.classification import (
+    CONFIDENCE_CEILING_BY_EVIDENCE,
+    validate_model_verdict,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     Classification,
@@ -149,7 +151,12 @@ def test_domain_and_url_are_never_fabricated():
 
 
 def test_generic_browser_title_has_low_evidence():
-    assert "cap confidence at 0.59" in SYSTEM_PROMPT
+    # The thin-evidence cap must be stated to the model AND enforced in
+    # code. A prompt instruction alone is a request; the ceiling is the
+    # guarantee.
+    assert "weak caps at 0.59" in SYSTEM_PROMPT
+    assert CONFIDENCE_CEILING_BY_EVIDENCE["weak"] == 0.59
+    assert CONFIDENCE_CEILING_BY_EVIDENCE["absent"] == 0.35
     payload = evidence_for("firefox.exe", "Mozilla Firefox", None)
     assert payload["policy_prior"]["decision"] == "container-neutral"
 
@@ -157,7 +164,16 @@ def test_generic_browser_title_has_low_evidence():
 def test_batch_prompt_applies_thin_evidence_confidence_rule():
     assert "0.0-0.59" in BATCH_INSTRUCTIONS
     assert "Never label thin evidence as distractive" in BATCH_INSTRUCTIONS
-    assert "0.0-0.59" in SYSTEM_PROMPT
+    assert "weak caps at 0.59" in SYSTEM_PROMPT
+    # Enforcement, not just instruction: a model claiming 0.95 on weak
+    # evidence cannot produce a confident verdict.
+    capped = validate_model_verdict({
+        "category": "productive", "productivity": "productive",
+        "activity": "a", "signal": "b", "confidence": 0.95,
+        "evidence_quality": "weak",
+    })
+    assert capped["confidence"] <= 0.59
+    assert capped["category"] == "uncertain"
 
 
 def test_evidence_builder_emits_policy_prior():
@@ -170,7 +186,9 @@ def test_evidence_builder_emits_policy_prior():
 
 
 def test_prompt_version_is_stored():
-    assert PROMPT_VERSION == "2"
+    # V3: the prompt was rewritten around evidence-bounded inference and
+    # revision, so both contract versions moved with it.
+    assert PROMPT_VERSION == "3"
     item = Classification(session_id="s1")
     assert item.prompt_version == "1"
     assert item.to_dict()["prompt_version"] == "1"

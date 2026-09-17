@@ -84,7 +84,13 @@ def test_service_publishes_executed_intervention_and_persists_user_action():
         browser_window_id="17", browser_tab_id="42",
     )
     classification = Classification(
-        session.id, "entertainment", topic="reddit", productivity="distracting", confidence=.9
+        session.id, "entertainment", topic="reddit", productivity="distracting", confidence=.9,
+        classification_status="classified", provider="gemini", model="gemini-test",
+        source="gemini", evidence_quality="strong",
+        # Interventions require a verdict that provably covers the session.
+        evidence_start=session.start_time, evidence_end=session.end_time,
+        evidence_digest="fixture", evidence_observation_count=3,
+        evidence_active_seconds=session.duration,
     )
     observation = BehaviorObservation(
         session.id, BehaviorState.DISTRACTED, session.start, .9, .9, True, "distracted"
