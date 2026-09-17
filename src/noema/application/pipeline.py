@@ -27,7 +27,8 @@ from noema.domain.normalization import EventNormalizer, application_identity
 from noema.domain.presence import PresenceDetector, PresenceState, PresenceTimeline, is_presence_event
 from noema.domain.privacy import PrivacyFilter
 from noema.domain.sessions import ActivitySession, Sessionizer
-from noema.classification.extension import ExtensionProvenance, assess_extension
+from noema.classification.coverage import resolve_slice_verdict
+from noema.classification.extension import ExtensionProvenance
 from noema.classification import queue as classification_queue
 from noema.classification.queue import (
     CLASSIFICATION_RETRIES_MAX,
@@ -686,59 +687,19 @@ class NoemaService:
     def _summary_segment(event: Any, start: datetime, end: datetime, event_sessions: dict, classifications: dict,
                          lineage: Optional[dict] = None) -> dict:
         session_id = event_sessions.get(event.event_key)
-        classification = classifications.get(session_id)
-        info = lineage or {}
-        parents = info.get("parents", {})
-        inherited = info.get("inherited", set())
-        episodes = info.get("episodes", {})
-        apps = info.get("apps", {})
-        domains = info.get("domains", {})
+        parents = (lineage or {}).get("parents", {})
         parent_id = parents.get(session_id)
-        provenance = ExtensionProvenance.NONE
-        inherited_from = None
-        if classification is not None and session_id not in inherited:
-            # The model evaluated this unit's own evidence directly.
-            provenance = ExtensionProvenance.DIRECT
-        elif classification is not None and parent_id is not None:
-            # Candidate extension: the verdict may cover this slice ONLY if
-            # the deterministic gate positively verifies continuity. Absence
-            # of contradiction is never enough; doubt strips the verdict.
-            episode = episodes.get(parent_id)
-            assessment = assess_extension(
-                {
-                    "app": event.app, "title": event.title,
-                    "domain": event.domain, "url": event.url,
-                    "seconds": (end - start).total_seconds(),
-                    "start": start, "end": end,
-                    "window_id": event.browser_window_id,
-                    "tab_id": event.browser_tab_id,
-                },
-                {
-                    "category": classification.category,
-                    "productivity": classification.productivity,
-                    "topic": classification.topic,
-                    "activity": classification.activity,
-                    "prompt_version": classification.prompt_version,
-                    "classifier_version": classification.classifier_version,
-                },
-                {
-                    "primary_task": getattr(episode, "primary_task", None),
-                    "primary_topic": getattr(episode, "primary_topic", None),
-                    "start": getattr(episode, "start_time", None),
-                    "end": getattr(episode, "end_time", None),
-                    "browser_window_id": getattr(episode, "browser_window_id", None),
-                    "browser_tab_id": getattr(episode, "browser_tab_id", None),
-                } if episode is not None else {},
-                set(apps.get(parent_id, set())),
-                set(domains.get(parent_id, set())),
-            ) if episode is not None else None
-            if assessment is not None and assessment.licensed:
-                provenance = assessment.provenance
-                inherited_from = parent_id
-            else:
-                # Not licensed: the slice keeps no verdict. It aggregates as
-                # unclassified time and displays as pending/unknown.
-                classification = None
+        classification, provenance, inherited_from = resolve_slice_verdict(
+            classifications, lineage, session_id,
+            {
+                "app": event.app, "title": event.title,
+                "domain": event.domain, "url": event.url,
+                "seconds": (end - start).total_seconds(),
+                "start": start, "end": end,
+                "window_id": event.browser_window_id,
+                "tab_id": event.browser_tab_id,
+            },
+        )
         classified_productivity = None
         if classification:
             classified_productivity = "distractive" if classification.category == "distractive" or classification.productivity == "distracting" else classification.category

@@ -7,6 +7,9 @@ old
 # Coverage
 *coverage*
 htmlcov
+# ...except the classification coverage module, which is source code:
+# the broad pattern above is meant for coverage REPORTS (htmlcov etc.).
+!src/noema/classification/coverage.py
 
 # Editor/IDEs
 .idea
