@@ -28,6 +28,13 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from noema.infrastructure.ollama import OllamaClient
+from noema.classification.batching import (
+    BATCH_MAX_OUTPUT_TOKENS,
+    BATCH_OUTPUT_RESERVE_PER_ITEM,
+    pack_batches,
+    valid_item,
+)
+from noema.classification.contracts import BATCH_INSTRUCTIONS
 from noema.observability.models import (
     Pipeline,
     Purpose,
@@ -302,45 +309,6 @@ OUTPUT_TOKEN_RESERVE = 600
 # 200K tokens — deliberately below the 250K TPM ceiling. Never a fixed
 # session count: long evidence means smaller groups and vice versa.
 BATCH_TOKEN_BUDGET = 200000
-BATCH_OUTPUT_RESERVE_PER_ITEM = 500
-BATCH_MAX_OUTPUT_TOKENS = 65536
-BATCH_INSTRUCTIONS = (
-    "BATCH REQUEST: classify EACH of the following {count} desktop activity sessions independently, "
-    "in the given order. Sessions are independent observations; never merge them into one verdict. "
-    "List order carries no meaning: judge every session only from its own evidence plus its explicitly "
-    "labeled episode context, never from neighboring items, and never copy a verdict from one session_id "
-    "to another. "
-    "Reason per session in this order: (1) application/container, (2) actual session title, "
-    "(3) special application policy, (4) duration and continuity, (5) neighboring activity, "
-    "(6) semantic activity, (7) evidence quality, (8) productive/distractive/neutral, "
-    "(9) alignment only if a goal exists. Never start from 'is this productive?'. "
-    "POLICY: browsers (firefox, chrome, edge, ...) are NEUTRAL containers — inspect the title, "
-    "never judge the executable; a bare 'Mozilla Firefox'/'New Tab' is insufficiently specified: "
-    "neutral, low evidence. YouTube: inspect the title — technical/learning titles indicate learning, "
-    "entertainment titles indicate leisure; never invent video content. WhatsApp: inspect "
-    "title/duration/context — a genuinely continuous episode over 10 minutes is strong distractive "
-    "evidence, short checks are not automatically distractive. Instagram, Netflix, Reddit, TikTok: "
-    "distractive by user policy, still citing observed telemetry. Games (Rocket League, Chess, "
-    "Valorant, Counter-Strike, GTA, Minecraft, Fortnite, Apex, League of Legends, Dota, Overwatch, "
-    "...): actual gameplay is distractive, but technical work about games ('Rocket League API "
-    "documentation', 'Chess engine implementation') is not gameplay — inspect the activity. "
-    "Never invent domains, URLs, search queries, video content, goals, or intents. "
-    "Return a single JSON array with exactly {count} objects in the SAME order as the input. "
-    "Each object must copy its input \"session_id\" exactly and follow this schema: "
-    "{{\"session_id\":\"...\",\"category\":\"productive | distractive | neutral\","
-    "\"subcategory\":\"short_snake_case\",\"activity\":\"short description\","
-    "\"signal\":\"why, citing observed evidence\",\"topic\":\"short topic or null\","
-    "\"project\":\"specific project or null\",\"service\":\"website or app service\","
-    "\"intent_signal\":\"what the user appears to be trying to do\","
-    "\"activity_type\":\"coding | research | technical_research | studying | reading | writing | watching | "
-    "browsing | sports_browsing | gaming | messaging | email | meeting | shopping | engineering | data_analysis | "
-    "administration\",\"productivity\":\"productive | neutral | distracting\",\"confidence\":0.0,"
-    "\"evidence_quality\":\"strong | moderate | weak | absent\"}}. "
-    "If one session's evidence is thin (weak/absent), give THAT object category neutral with "
-    "confidence 0.0-0.59; never drop it, never invent evidence. Never label thin evidence as "
-    "distractive. Neutral is not distraction and does not mean failure. "
-    "Output ONLY the JSON array."
-)
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
 
@@ -1411,92 +1379,18 @@ class ProviderChain:
                       budget: int) -> List[tuple]:
         """Group sessions to exploit the model's full usable window.
 
-        Fill order is chronological (synthesis weighs recency). Item sizes
-        come from text length first (chars//4, one accurate-ish estimate),
-        then each assembled group is measured EXACTLY once with the model's
-        real tokenizer; oversized groups shed their tail until they fit.
-        Groups are only ever split for size — never pre-split small.
-        Returns ``[(group, measured_tokens_or_None)]``.
+        Delegates to :mod:`noema.classification.batching`, which owns
+        the planning logic; the chain keeps the call shape and records
+        the pack stats for telemetry exactly as before.
         """
-        build = getattr(provider, "build_batch_prompt", None)
-        counter = getattr(provider, "count_tokens", None)
-
-        def assemble(group: List[Mapping[str, Any]]) -> str:
-            ids = [entry["session"].id for entry in group]
-            evs = [entry["evidence"] for entry in group]
-            if callable(build):
-                try:
-                    return build(ids, evs)
-                except Exception:
-                    pass
-            return BATCH_INSTRUCTIONS.format(count=len(group)) + "\nSESSIONS:\n" + json.dumps(
-                [{"session_id": sid, "evidence": ev} for sid, ev in zip(ids, evs)],
-                ensure_ascii=False, sort_keys=True, default=str)
-
-        def measure(prompt: str) -> Optional[int]:
-            if not callable(counter):
-                return None
-            try:
-                return int(counter(prompt))
-            except Exception:
-                return None
-
-        def item_estimate(entry: Mapping[str, Any]) -> int:
-            return len(json.dumps(entry.get("evidence", {}), ensure_ascii=False,
-                                  sort_keys=True, default=str)) // 4 + BATCH_OUTPUT_RESERVE_PER_ITEM
-
-        header_est = len(BATCH_INSTRUCTIONS.format(count=0)) // 4 + 500
-        groups: List[tuple] = []
-        pack_stats: List[Dict[str, Any]] = []
-        remaining = list(entries)
-        group_index = 0
-        while remaining:
-            # Greedy chronological fill on the cheap length estimate.
-            group: List[Mapping[str, Any]] = []
-            est = header_est
-            while remaining and (not group or est + item_estimate(remaining[0]) <= budget):
-                entry = remaining.pop(0)
-                group.append(entry)
-                est += item_estimate(entry)
-            # Exact tokenizer verification: shed the tail back onto the
-            # queue until the assembled request truly fits. Singletons are
-            # always kept here; the send path splits only on real errors.
-            sheds = 0
-            measured = measure(assemble(group))
-            while measured is not None and measured > budget and len(group) > 1:
-                remaining.insert(0, group.pop())
-                sheds += 1
-                measured = measure(assemble(group))
-            groups.append((group, measured))
-            pack_stats.append({
-                "group_index": group_index,
-                "size": len(group),
-                "budget": int(budget),
-                "measured": measured,
-                "tail_sheds": sheds,
-                "utilization": (round(measured / budget, 4)
-                                if measured and budget else None),
-            })
-            group_index += 1
+        groups, pack_stats = pack_batches(entries, provider, budget)
         self._last_pack_stats = pack_stats
         return groups
 
     @staticmethod
     def _valid_item(payload: Any, session_id: Any) -> bool:
-        if not isinstance(payload, Mapping):
-            return False
-        if str(payload.get("session_id", "")) != str(session_id):
-            return False
-        category = str(payload.get("category", "")).strip().lower()
-        productivity = str(payload.get("productivity", "neutral")).strip().lower()
-        return (
-            category in {"productive", "distractive", "neutral", "development", "research"}
-            and productivity in {"productive", "distracting", "neutral"}
-            and isinstance(payload.get("activity"), str)
-            and bool(payload.get("activity", "").strip())
-            and isinstance(payload.get("signal"), str)
-            and bool(payload.get("signal", "").strip())
-        )
+        """Validate one batch output item (delegates to batching)."""
+        return valid_item(payload, session_id)
 
     @staticmethod
     def _looks_like_length_error(exc: BaseException) -> bool:
