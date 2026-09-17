@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from noema.domain.activity import coerce_timestamp
-from noema.domain.policy import assess_policy
+from noema.classification.policy import assess_policy
 from noema.infrastructure.ollama import OllamaClient, OllamaError
 from noema.domain.session_context import is_meaningful_session
 from noema.domain.sessions import ActivitySession

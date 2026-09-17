@@ -11,3 +11,15 @@ and configuration. It must never import application orchestration
 (``application.pipeline``), the daemon lifecycle (``runtime.daemon``),
 API/dashboard code, or web code.
 """
+
+from noema.classification.extension import (
+    ExtensionAssessment,
+    ExtensionProvenance,
+    assess_extension,
+)
+
+__all__ = [
+    "ExtensionAssessment",
+    "ExtensionProvenance",
+    "assess_extension",
+]

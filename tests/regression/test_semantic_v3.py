@@ -24,7 +24,7 @@ from noema.application.classification import Classification
 from noema.domain.activity import ActivityEvent
 from noema.domain.meaningful import MeaningfulSession
 from noema.domain.meaningful.models import EvidenceQuality
-from noema.domain.semantic import ExtensionProvenance, assess_extension
+from noema.classification import ExtensionProvenance, assess_extension
 from noema.domain.sessions import ActivitySession
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.infrastructure.database import SQLiteStore
@@ -259,7 +259,7 @@ def test_case_h_exact_boundary_is_examined_not_assumed():
 
 def test_veto_beats_matching_positives():
     """Gameplay veto wins even when app/title signals would match."""
-    from noema.domain.semantic.continuity import positive_signals
+    from noema.classification.continuity import positive_signals
 
     verdict = _verdict(
         topic="Rocket League bot development", activity="Coding RL bot",

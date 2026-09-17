@@ -7,7 +7,7 @@ from noema.application.classification import (
     Classifier,
 )
 from noema.domain.meaningful.models import MeaningfulSession
-from noema.domain.policy import assess_policy
+from noema.classification.policy import assess_policy
 from noema.infrastructure.providers import BATCH_INSTRUCTIONS
 
 

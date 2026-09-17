@@ -423,7 +423,7 @@ def test_daily_summary_timeline_marks_inherited_segments():
     member slice must pass the extension gate (positive continuity);
     divergent or thin slices aggregate as unclassified time instead.
     """
-    from noema.domain.semantic import ExtensionProvenance
+    from noema.classification import ExtensionProvenance
 
     store, service, sessions = _timeline_fixture()
     episode = MeaningfulSession(

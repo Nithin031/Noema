@@ -27,7 +27,7 @@ from noema.domain.normalization import EventNormalizer, application_identity
 from noema.domain.presence import PresenceDetector, PresenceState, PresenceTimeline, is_presence_event
 from noema.domain.privacy import PrivacyFilter
 from noema.domain.sessions import ActivitySession, Sessionizer
-from noema.domain.semantic import ExtensionProvenance, assess_extension
+from noema.classification.extension import ExtensionProvenance, assess_extension
 from noema.domain.session_context import browser_name
 
 

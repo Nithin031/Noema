@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
-from noema.domain.semantic import continuity as _continuity
+from noema.classification import continuity as _continuity
 
 #: Distinct positive signals required to license extension. Two, so no
 #: single signal (one app, one keyword, one tab) can ever license alone.

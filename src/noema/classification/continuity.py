@@ -7,7 +7,7 @@ Vocabulary policy (deliberate and restrictive):
   application, one keyword, an allowlist hit, or the mere absence of
   entertainment tokens can never license extension alone.
 * Contradiction signals reuse the existing deterministic policy module
-  (:mod:`noema.domain.policy.activity_policy`) — no new keyword lists are
+  (:mod:`noema.classification.policy`) — no new keyword lists are
   invented here. Only an explicit policy ``distractive`` decision with
   substantive duration vetoes a productive/neutral verdict.
 * Absence of contradiction is recorded but never counted as positive
@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Set
 
-from noema.domain.policy.activity_policy import assess_policy
+from noema.classification.policy import assess_policy
 
 #: Minimum slice duration (seconds) for a slice to carry a verdict at all.
 #: Excludes zero/negative glitches; thin-but-identified slices are still
