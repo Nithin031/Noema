@@ -176,6 +176,20 @@ def test_prompt_version_is_stored():
     assert item.to_dict()["prompt_version"] == "1"
 
 
+def test_prompt_contracts_live_in_classification_contracts():
+    """Extraction pin: the canonical prompt objects live in contracts.py.
+
+    core.py re-exports the identical objects (identity, not a copy), so
+    every consumer — including monkeypatch sites — keeps working.
+    """
+    from noema.classification import contracts
+    import noema.classification.core as core
+
+    assert contracts.SYSTEM_PROMPT is core.SYSTEM_PROMPT
+    assert contracts.PROMPT_VERSION is core.PROMPT_VERSION
+    assert "cap confidence at 0.59" in contracts.SYSTEM_PROMPT
+
+
 def test_classifier_stamps_prompt_version():
     from noema.infrastructure.providers import ProviderError
 
