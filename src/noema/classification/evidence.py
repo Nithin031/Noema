@@ -122,7 +122,7 @@ def build_evidence(session: Any, recent_context: Optional[Iterable[Mapping[str, 
             "source": session.source,
         }
         recent_items = [item for item in (recent_context or []) if isinstance(item, Mapping)]
-        # Member-of-episode envelope (see NoemaService._member_context):
+            # Member-of-episode envelope (see classification.queue.member_context):
         # the group this item was tokenized from, stated explicitly so
         # the model never has to guess group boundaries. Episode keys
         # are reserved here and never treated as neighboring activity.
