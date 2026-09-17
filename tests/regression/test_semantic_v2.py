@@ -17,8 +17,8 @@ alignment layer:
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-import noema.application.classification as classification_mod
-from noema.application.classification import Classification, Classifier
+import noema.classification.core as classification_mod
+from noema.classification.core import Classification, Classifier
 from noema.domain.behavior import BehaviorEngine, BehaviorState
 from noema.domain.intent import (
     AlignmentResult,

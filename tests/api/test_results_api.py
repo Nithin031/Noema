@@ -5,7 +5,7 @@ from noema.api import NoemaService, create_app
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.providers import ProviderChain, ProviderError
 
 

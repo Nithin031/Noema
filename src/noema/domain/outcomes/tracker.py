@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from noema.domain.activity import coerce_timestamp
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import Intervention
 from noema.domain.sessions import ActivitySession
 

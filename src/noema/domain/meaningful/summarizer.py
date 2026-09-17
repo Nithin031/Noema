@@ -7,7 +7,7 @@ import re
 from dataclasses import replace
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import Intent
 from noema.infrastructure.ollama import OllamaClient, OllamaError
 from noema.domain.sessions import ActivitySession

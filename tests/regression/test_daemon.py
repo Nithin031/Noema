@@ -28,7 +28,7 @@ from noema.runtime import (
     SingleInstanceLock,
 )
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.ollama import OllamaError
 
 

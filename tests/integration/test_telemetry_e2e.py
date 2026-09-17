@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from noema.api import NoemaService
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.observability.benchmark import BenchmarkRunner, compare_runs
 from noema.cli.benchmark import mock_providers
 from noema.observability.recorder import TelemetryRecorder

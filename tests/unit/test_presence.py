@@ -15,7 +15,7 @@ from noema.domain.activity import ActivityEvent
 from noema.infrastructure.browser.models import BrowserEvent
 from noema.runtime import NoemaDaemon, DaemonConfig
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.infrastructure.ollama import OllamaError
 from noema.domain.presence import (
     PresenceDetector,
@@ -383,7 +383,7 @@ def test_afk_covered_activity_never_reaches_the_provider():
 
 def test_end_to_end_active_flow_classifies_once_afk_never():
     """PART 66: 10:00 active research, AFK gap, 10:10 rapid coding run."""
-    from noema.application.classification import Classifier
+    from noema.classification.core import Classifier
     from noema.domain.meaningful import MeaningfulSessionEngine
 
     class CountingProvider:
@@ -460,7 +460,7 @@ def test_pending_gate_excludes_measured_afk_only_sessions():
 
 # PART 57: presence + recent-classifications endpoints serve backend truth.
 def test_presence_and_recent_classification_endpoints():
-    from noema.application.classification import Classification
+    from noema.classification.core import Classification
     from noema.domain.meaningful import MeaningfulSession
 
     event_stamp = recent_stamp(10)

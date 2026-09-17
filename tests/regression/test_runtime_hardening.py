@@ -6,7 +6,7 @@ from noema.api import NoemaService
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.infrastructure.database import SQLiteStore
 from noema.runtime import NoemaDaemon, DaemonConfig
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 
 
 class EmptyActivityWatch:

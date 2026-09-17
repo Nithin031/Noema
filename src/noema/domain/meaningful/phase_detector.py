@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.sessions import ActivitySession
 
 from .models import SessionPhase

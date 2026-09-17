@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from noema.application.autonomous import AutonomousAgent
 from noema.domain.behavior import BehaviorObservation, BehaviorState
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import Intervention, InterventionMode, InterventionStatus
 from noema.domain.memory import MemoryEngine, Personalizer
 from noema.domain.outcomes import InterventionOutcome, RecoveryStatus

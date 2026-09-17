@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import AlignmentResult, Intent
 from noema.domain.meaningful.models import EvidenceQuality
 from noema.domain.sessions import ActivitySession

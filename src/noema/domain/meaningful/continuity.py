@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional, Set
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import AlignmentResult, Intent
 from noema.domain.meaningful.models import EvidenceQuality
 from noema.domain.sessions import ActivitySession

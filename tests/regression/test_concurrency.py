@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from noema.api import NoemaService, create_app
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.activity_sources.activitywatch import (
     ActivityWatchAdapter,

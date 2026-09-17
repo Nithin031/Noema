@@ -9,7 +9,7 @@ locks in, and recovery measures DIRECT with response linkage.
 from datetime import datetime, timedelta, timezone
 
 from noema.api import NoemaService
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.application.realtime import FastModelVerifier
 from noema.domain.intervention import InterventionEngine, InterventionMode, InterventionPolicy
 from noema.domain.sessions import ActivitySession
@@ -74,7 +74,7 @@ def test_v3_full_loop_reasoning_to_direct_recovery():
             device="laptop", app="Code", title="work.py",
             event_keys=("v3-rec",))
         store.insert_session(recovery)
-        from noema.application.classification import Classification
+        from noema.classification.core import Classification
         store.insert_classification(Classification(
             session_id=recovery.id, category="productive",
             productivity="productive", confidence=0.9,

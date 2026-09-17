@@ -6,7 +6,7 @@ import io
 import json
 from urllib.error import HTTPError
 
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.domain.activity import ActivityEvent
 from noema.domain.sessions import Sessionizer
 from noema.infrastructure.database import SQLiteStore

@@ -1,6 +1,6 @@
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.infrastructure.ollama import OllamaError
 from noema.domain.sessions import Sessionizer
 

@@ -1,4 +1,4 @@
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 
 
 def test_chunk_aggregation_weights_duration():

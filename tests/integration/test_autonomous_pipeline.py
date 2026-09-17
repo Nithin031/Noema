@@ -11,7 +11,7 @@ from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAda
 from noema.domain.activity import ActivityEvent
 from noema.runtime import NoemaDaemon, DaemonConfig
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.infrastructure.providers import ProviderChain, ProviderError
 from noema.domain.meaningful import MeaningfulSession
 from noema.infrastructure.ollama import OllamaError

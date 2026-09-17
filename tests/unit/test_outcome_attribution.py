@@ -35,7 +35,7 @@ def _recovery_session(store, tag):
 
 
 def _productive_classification(store, session):
-    from noema.application.classification import Classification
+    from noema.classification.core import Classification
     store.insert_classification(Classification(
         session_id=session.id, category="productive", productivity="productive",
         confidence=0.9, classification_status="classified", provider="test",

@@ -10,7 +10,7 @@ policy executes, the user locks in, and recovery measures DIRECT.
 from datetime import datetime, timedelta, timezone
 
 from noema.api import NoemaService
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.application.meme_decision import MemeDecider
 from noema.application.realtime import FastModelVerifier
 from noema.application.realtime.intervention import InterventionReasoner
@@ -166,7 +166,7 @@ def test_full_loop_with_gemini_strategy_rank_copy_and_outcome():
             intervention["id"], "DISPLAYED", state="DISPLAYED")
         service.record_intervention_action(
             intervention["id"], "LOCK_IN", state="INTERACTED")
-        from noema.application.classification import Classification
+        from noema.classification.core import Classification
         from noema.domain.sessions import ActivitySession
 
         recovery = ActivitySession(

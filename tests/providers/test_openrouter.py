@@ -9,7 +9,7 @@ from urllib.error import HTTPError, URLError
 from noema.domain.activity import ActivityEvent
 from noema.runtime import DaemonConfig
 from noema.cli.daemon import _classifier, _openrouter_providers
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.providers import GeminiProvider, ProviderChain, OpenRouterProvider, ProviderError
 from noema.domain.sessions import Sessionizer
 

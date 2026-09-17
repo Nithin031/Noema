@@ -13,7 +13,7 @@ from noema.api import NoemaService
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.runtime import NoemaDaemon, DaemonConfig
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.domain.meaningful import MeaningfulSession
 from noema.infrastructure.ollama import OllamaError
 from noema.application.realtime import FastModelVerifier

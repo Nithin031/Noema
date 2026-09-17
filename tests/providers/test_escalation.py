@@ -1,6 +1,6 @@
 """Workhorse/escalation routing and fallback-exclusion tests (spec 27-32)."""
 
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.domain.meaningful.models import MeaningfulSession
 from noema.infrastructure.providers import (
     ESCALATION_MODEL,

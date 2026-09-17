@@ -20,7 +20,7 @@ Covered here:
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.activity import ActivityEvent
 from noema.domain.meaningful import MeaningfulSession
 from noema.domain.meaningful.models import EvidenceQuality

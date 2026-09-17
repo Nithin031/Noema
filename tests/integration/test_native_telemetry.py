@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from noema.api import NoemaService
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.activity_sources import (
     CompositeActivitySource,
     NativeAFKSource,

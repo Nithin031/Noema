@@ -12,7 +12,7 @@ from typing import Optional, Sequence
 from noema.api import NoemaService, serve
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter, ActivityWatchClient
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.providers import FAST_DISTRACTION_MODEL, GeminiProvider, ProviderChain, OllamaProvider, OpenRouterProvider
 from noema.domain.intent import IntentEngine
 from noema.domain.intervention import (

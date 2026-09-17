@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 from noema.domain.activity import coerce_timestamp
 from noema.domain.behavior import BehaviorObservation, BehaviorState
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import Intent
 from noema.domain.session_context import browser_target, session_label
 from noema.domain.sessions import ActivitySession

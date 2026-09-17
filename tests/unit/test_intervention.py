@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from noema.domain.behavior import BehaviorObservation, BehaviorState
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import (
     InterventionEngine,
     InterventionMode,

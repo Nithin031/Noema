@@ -5,7 +5,7 @@ from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAda
 from noema.api import NoemaService
 from noema.infrastructure.database import SQLiteStore
 from noema.domain.behavior import BehaviorState, BehaviorEngine
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.domain.intent import AlignmentResult, GoalAligner, Intent
 from noema.domain.meaningful import MeaningfulSession, MeaningfulSessionEngine, MeaningfulSessionStatus, MeaningfulSessionSummarizer
 from noema.infrastructure.ollama import OllamaError

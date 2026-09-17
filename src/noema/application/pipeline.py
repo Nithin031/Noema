@@ -14,7 +14,7 @@ from noema.domain.activity import ActivityEvent, coerce_timestamp
 from noema.infrastructure.browser import BrowserBridge, BrowserEvent, DesktopNotificationHandler
 from noema.domain.behavior import BehaviorObservation, BehaviorEngine
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.domain.intent import AlignmentResult, GoalAligner, Intent, IntentEngine
 from noema.domain.intervention import Intervention, InterventionEngine, InterventionMode, InterventionStatus
 from noema.domain.meme import MemeIntelligence, MemePayload

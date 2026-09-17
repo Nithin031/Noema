@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 from noema.api import NoemaService, create_app
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
-from noema.application.classification import Classification
+from noema.classification.core import Classifier
+from noema.classification.core import Classification
 from noema.domain.intent import IntentEngine
 from noema.infrastructure.ollama import OllamaError
 from noema.domain.privacy import PrivacyFilter, PrivacyPolicy

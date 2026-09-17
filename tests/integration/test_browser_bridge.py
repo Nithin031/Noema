@@ -3,7 +3,7 @@ from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAda
 from noema.domain.behavior import BehaviorObservation, BehaviorState
 from noema.infrastructure.browser import BrowserBridge
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.domain.intervention import InterventionEngine, InterventionMode, InterventionPolicy
 from noema.domain.meaningful import MeaningfulSession
 

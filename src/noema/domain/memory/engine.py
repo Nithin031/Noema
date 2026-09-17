@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from noema.domain.behavior import BehaviorObservation, BehaviorState
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.outcomes import InterventionOutcome, RecoveryStatus
 from noema.domain.session_context import session_label
 from noema.domain.sessions import ActivitySession

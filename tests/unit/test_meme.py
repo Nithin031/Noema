@@ -1,5 +1,5 @@
 from noema.domain.behavior import BehaviorObservation, BehaviorState
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import Intent
 from noema.domain.meme import MemeIntelligence, MemePayload, MemeRenderer
 from noema.domain.sessions import ActivitySession

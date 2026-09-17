@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from noema.api import NoemaService, create_app
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.observability.benchmark import (
     BENCHMARK_TEST_SET,
     FIXTURES,

@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from noema.domain.activity import ActivityEvent, StoredActivityEvent, coerce_timestamp
 from noema.domain.behavior import BehaviorObservation, BehaviorState
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import Intervention, InterventionMode, InterventionStatus
 from noema.domain.meme import MemePayload
 from noema.domain.memory import Memory, MemoryKind, PersonalizationProfile

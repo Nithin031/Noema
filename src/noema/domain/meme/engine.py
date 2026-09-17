@@ -11,7 +11,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from noema.domain.activity import coerce_timestamp
 from noema.domain.behavior import BehaviorObservation
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import Intent
 from noema.infrastructure.ollama import OllamaClient, OllamaError
 from noema.domain.session_context import session_label

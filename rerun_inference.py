@@ -37,7 +37,7 @@ from noema.infrastructure.activity_sources.activitywatch.adapter import (
 )
 from noema.infrastructure.database.store import SQLiteStore
 from noema.infrastructure.providers import GeminiProvider, ProviderChain
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.application.pipeline import NoemaService
 
 WIPE_TABLES = (

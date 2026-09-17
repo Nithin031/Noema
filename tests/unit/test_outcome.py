@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import Intervention, InterventionMode, InterventionStatus
 from noema.domain.outcomes import OutcomeTracker, RecoveryStatus
 from noema.domain.sessions import ActivitySession

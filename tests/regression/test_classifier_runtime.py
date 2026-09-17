@@ -6,7 +6,7 @@ from noema.api import NoemaService, create_app
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.domain.sessions import Sessionizer
 
 
@@ -76,7 +76,7 @@ def test_ollama_job_records_real_provider_provenance_and_metrics():
 
 
 def test_recent_activity_inherits_parent_meaningful_classification():
-    from noema.application.classification import Classification
+    from noema.classification.core import Classification
     from noema.domain.meaningful import MeaningfulSession
 
     store = SQLiteStore()

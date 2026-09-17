@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set
 
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.session_context import is_meaningful_session, search_values
 from noema.domain.sessions import ActivitySession
 

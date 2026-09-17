@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intent import GoalAligner, Intent, IntentEngine
 from noema.domain.sessions import Sessionizer
 

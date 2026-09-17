@@ -10,7 +10,7 @@ from noema.api import NoemaService, create_app
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
 from noema.domain.activity import ActivityEvent
 from noema.infrastructure.database import SQLiteStore
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.providers import ProviderChain, ProviderError
 from noema.observability.models import Purpose, Pipeline, TokenBasis
 from noema.observability.recorder import TelemetryRecorder
@@ -236,7 +236,7 @@ def test_classifier_retry_attempts_recorded_once_each():
         def count_tokens(self, prompt):
             return 60
 
-    import noema.application.classification as classifier_module
+    import noema.classification.core as classifier_module
 
     original_sleep = classifier_module.time.sleep
     classifier_module.time.sleep = lambda seconds: None
@@ -400,7 +400,7 @@ def test_embedding_records_exact_or_estimated_tokens():
 def test_metrics_prune_command_keeps_product_data(tmp_path):
     from datetime import datetime, timedelta, timezone
 
-    from noema.application.classification import Classification
+    from noema.classification.core import Classification
     from noema.cli.benchmark import run_metrics_command
     from noema.observability.models import InvocationRecord, utcnow_iso
 

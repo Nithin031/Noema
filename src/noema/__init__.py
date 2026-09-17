@@ -16,7 +16,7 @@ from .infrastructure.providers import (
     OllamaProvider,
     ProviderError,
 )
-from .application.classification import (
+from .classification.core import (
     Classification,
     Classifier,
 )

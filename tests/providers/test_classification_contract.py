@@ -1,5 +1,5 @@
 from noema.domain.activity import ActivityEvent
-from noema.application.classification import Classifier
+from noema.classification.core import Classifier
 from noema.infrastructure.providers import ProviderError
 from noema.domain.sessions import Sessionizer
 

@@ -1,6 +1,6 @@
 """Activity policy, evidence, and prompt-contract tests (spec 1-21, 47-48)."""
 
-from noema.application.classification import (
+from noema.classification.core import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     Classification,

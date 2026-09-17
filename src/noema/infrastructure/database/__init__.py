@@ -3,7 +3,7 @@
 from .store import SQLiteStore
 from noema.domain.behavior import BehaviorObservation, BehaviorState
 from noema.domain.activity import StoredActivityEvent
-from noema.application.classification import Classification
+from noema.classification.core import Classification
 from noema.domain.intervention import Intervention, InterventionMode, InterventionStatus
 from noema.domain.meme import MemePayload
 from noema.domain.memory import Memory, MemoryKind, PersonalizationProfile

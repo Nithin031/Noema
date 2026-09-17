@@ -17,7 +17,7 @@ session_id echo. This pins:
 from datetime import timedelta
 
 from noema.api import NoemaService
-from noema.application.classification import Classification, Classifier
+from noema.classification.core import Classification, Classifier
 from noema.domain.activity import ActivityEvent
 from noema.domain.meaningful import MeaningfulSession
 from noema.domain.meaningful.models import EvidenceQuality
@@ -205,7 +205,7 @@ def test_member_context_is_episode_scoped():
 
 
 def test_member_evidence_carries_episode_envelope():
-    from noema.application.classification import Classifier
+    from noema.classification.core import Classifier
 
     store = SQLiteStore()
     try:
