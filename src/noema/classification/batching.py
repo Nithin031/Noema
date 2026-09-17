@@ -8,12 +8,34 @@ these planners before sending anything.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 from noema.classification.contracts import BATCH_INSTRUCTIONS
 
 BATCH_OUTPUT_RESERVE_PER_ITEM = 500
 BATCH_MAX_OUTPUT_TOKENS = 65536
+
+
+@runtime_checkable
+class BatchTransport(Protocol):
+    """Narrow batch transport contract (Step 7, interface only).
+
+    The classification layer owns what a batch means (planning in
+    :func:`pack_batches`, validation in :func:`valid_item`, prompts in
+    contracts); infrastructure owns how it is transported. Any object
+    with this call shape — e.g. ``ProviderChain`` in
+    :mod:`noema.infrastructure.providers` — satisfies the contract.
+    Introduced as a ``Protocol`` so there is zero runtime behavior
+    change: no wrapper, no new transport path, no provider rewrite.
+    """
+
+    def classify_batch(
+        self,
+        entries: List[Mapping[str, Any]],
+        telemetry: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Mapping[str, Any]]:
+        """Classify many sessions; absent items fall back to single calls."""
+        ...
 
 
 def pack_batches(entries: List[Mapping[str, Any]], provider: Any,
