@@ -738,6 +738,12 @@ export const liveApi = {
     if (date) q.set('date', date);
     return request<{ daily: DailySummary }>(`/api/dashboard/summary?${q.toString()}`);
   },
+  /** Classified activity rows for one local day (carries activity_type: coding, studying, ...). */
+  activity: (date?: string, limit = 2000) => {
+    const q = new URLSearchParams({ range: 'today', timezone: browserTimezone(), limit: String(limit) });
+    if (date) q.set('date', date);
+    return request<{ activities: ResultRow[] }>(`/api/dashboard/recent-activity?${q.toString()}`);
+  },
   breakStatus: () => request<{ break: BreakStatus }>('/api/break'),
   startBreak: (interventionId: string, minutes = 5) =>
     request<{ break: BreakStatus }>(`/api/interventions/${encodeURIComponent(interventionId)}/break`, {

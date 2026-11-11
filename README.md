@@ -1462,27 +1462,17 @@ Noema is licensed under the Mozilla Public License 2.0. See `LICENSE.txt`. Third
 
 ## 41. Dashboard UI
 
-The UI is the React app in `web/`, built to `web/dist/` and served by the daemon at `/`. It is a "riso zine" control room built around the **Anchor and the Rope**: your intent is the anchor, your behavior is a rope that goes taut as drift rises, and snaps when a nudge fires. It is authored at 3840px wide and zoomed to the viewport. Routes are hash-based (`#/command`, `#/analytics`, `#/memes`, `#/thinks`, `#/engine`, `#/privacy`, `#/week`, `#/recovery`, `#/break`, and `#/demo` for a synthetic 14 s loop).
+The UI is a plain analytics app in `web/` (React, built to `web/dist/` and served by the daemon at `/`). It shows what happened and nothing else: no on-task or off-task labels, no scores, no nudges. Routes are hash-based: `#/today`, `#/week`, `#/models`.
 
-Every screen reads the live API; nothing is invented:
+| Page | What it shows | Endpoints |
+| --- | --- | --- |
+| Today | active/away time, minutes per hour, categories (coding, studying, messaging, ...), a timeline by app/tab/away, top apps, titles and sites, and apps running in the background | `/api/dashboard/summary`, `/api/dashboard/recent-activity`, `/api/background` |
+| Week | hours per day for 7 days, top apps and sites | `/api/dashboard/summary?range=7d` |
+| Models | the real answer order (web LLM, Claude Code, Gemini), calls and speed today, Gemini free-tier quota | `/api/llm/lanes`, `/api/metrics/models`, `/api/debug/quotas`, `/api/classification/status` |
 
-| Screen | Endpoints |
-| --- | --- |
-| Command center | `/api/daemon/health`, `/api/realtime/status` (drift score + thresholds), `/api/detections` (Gemini verdict + rationale), `/api/intents` (get/set the intent), `/api/dashboard/summary` (episodes), `/api/interventions/feed` |
-| Nudge overlay | `/api/interventions/feed` (an unanswered, delivered nudge), `POST /api/interventions/{id}/action` (`LOCK_IN`, `INTENTIONAL`), `/break` (5-minute break), `/feedback`, `/api/meme-assets/{id}/image`, `/api/responses/effectiveness` |
-| Break mode | `/api/break`, `POST /api/interventions/{id}/break`, `LOCK_IN` to end early |
-| Recovery | `/api/interventions/feed` (outcome + attribution), `/api/detections`, `/api/outcomes` |
-| Analytics / Week | `/api/dashboard/summary?range=today&date=…` and `range=7d` |
-| Meme Center | `/api/meme-assets*`, `/api/responses`, `/api/responses/effectiveness` |
-| Engine room | `/api/debug/quotas`, `/api/metrics/models`, `/api/metrics/providers`, `/api/benchmarks` |
+AI is only used to name what an activity is (its category). Live drift scoring and nudges are switched off in the default setup (`NOEMA_REALTIME_ENABLED=false`, `NOEMA_EXECUTE_INTERVENTIONS=false`); the engine code is still in the repository but nothing runs it. The Models page reads the running daemon's own configuration, so it cannot disagree with the backend.
 
-Known gaps, shown honestly in the UI rather than faked:
-
-- **Privacy receipt.** Noema deliberately does not retain raw prompts or model responses, so there is no stored per-call receipt. The receipt is a labelled `EXAMPLE` of the evidence shape.
-- **Delete my data.** There is no delete endpoint yet; the button is disabled and the screen says how to remove the local database.
-- **Week view.** There is no "intended hours" source, so bars show active-at-computer vs aligned-with-intent.
-- **Engine room latency.** Only p50/p95 are recorded, not a time series, so it draws a p50-to-p95 bar rather than a sparkline.
-- The browser extension's in-page overlay (`web/extension/chromium/`, Brave and Edge) is separate from this app and has not been restyled.
+The page is authored at 3840px wide and zoomed to the viewport.
 
 ## 42. Background watcher
 

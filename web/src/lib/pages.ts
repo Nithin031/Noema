@@ -1,13 +1,13 @@
-export type PageKey = 'command' | 'analytics' | 'memes' | 'engine' | 'week';
+export type PageKey = 'today' | 'week' | 'models';
 
 export const PAGES: [PageKey, string][] = [
-  ['command', 'Command'], ['analytics', 'Analytics'], ['memes', 'Memes'], ['engine', 'Engine room'], ['week', 'Week'],
+  ['today', 'Today'], ['week', 'Week'], ['models', 'Models'],
 ];
 
-export type Route = PageKey | 'recovery' | 'break' | 'demo';
-const ROUTES = new Set<string>([...PAGES.map(([k]) => k), 'recovery', 'break', 'demo']);
+export type Route = PageKey;
+const ROUTES = new Set<string>(PAGES.map(([k]) => k));
 
 export function parseRoute(hash: string): Route {
   const key = hash.replace(/^#\/?/, '').split(/[/?]/)[0];
-  return (ROUTES.has(key) ? key : 'command') as Route;
+  return (ROUTES.has(key) ? key : 'today') as Route;
 }

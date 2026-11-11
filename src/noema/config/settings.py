@@ -593,6 +593,7 @@ class DaemonConfig:
             "NOEMA_OLLAMA_MODEL": "ollama_model",
             "NOEMA_BACKGROUND_AI": "background_ai_enabled",
             "NOEMA_REALTIME_ENABLED": "realtime_enabled",
+            "NOEMA_EXECUTE_INTERVENTIONS": "execute_interventions",
             "NOEMA_REALTIME_EVAL_SECONDS": "realtime_eval_interval_seconds",
             "NOEMA_FAST_MODEL_TIMEOUT_SECONDS": "fast_model_timeout_seconds",
             "NOEMA_FAST_GEMINI_MODEL": "fast_gemini_model",

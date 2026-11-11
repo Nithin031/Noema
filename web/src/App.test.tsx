@@ -1,71 +1,56 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import App from './App';
 
 type Json = Record<string, unknown>;
 
-function mockBackend(routes: Record<string, Json | number>) {
+function mockBackend(routes: Record<string, Json>) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input).replace(/^https?:\/\/[^/]+/, '').split('?')[0];
     const hit = routes[url];
     if (hit === undefined) return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
-    if (typeof hit === 'number') return new Response('{}', { status: hit });
     return new Response(JSON.stringify(hit), { status: 200 });
   }));
 }
 
-describe('App shell', () => {
-  beforeEach(() => { window.location.hash = '#/command'; });
+const seg = (app: string, title: string, minutes: number) => ({
+  timestamp: '2026-11-11T09:00:00', end: '2026-11-11T09:30:00', seconds: minutes * 60, application: app, title,
+  activity: 'Coding', productivity: 'neutral', confidence: 0.9,
+});
+
+const BACKGROUND = { enabled: true, now: { open: [], audio: [], audio_supported: true }, today: [], error: null };
+
+describe('App shell (plain analytics)', () => {
+  beforeEach(() => { window.location.hash = '#/today'; });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('shows the offline state when the daemon does not answer', async () => {
+  it('tells you when the daemon is not answering', async () => {
     mockBackend({});
     render(<App />);
-    expect(await screen.findByText(/DAEMON OFFLINE/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/daemon · offline/i).length).toBeGreaterThan(0);
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some((a) => /daemon is not answering/i.test(a.textContent ?? ''))).toBe(true);
   });
 
-  it('shows the empty state, not fake data, when there is no intent or activity', async () => {
-    mockBackend({
-      '/api/daemon/health': { status: 'ok' }, '/api/realtime/status': {}, '/api/detections': { detections: [] },
-      '/api/interventions/feed': { interventions: [] }, '/api/break': { break: { active: false } },
-      '/api/intents': { intents: [] }, '/api/dashboard/summary': { daily: { timeline: [] } },
-      '/api/outcomes': { outcomes: [] }, '/api/meme-assets/stats': { assets: 0, favorites: 0, by_sentiment: {}, curated_assets: 0, active_responses: 0 },
-    });
-    render(<App />);
-    expect(await screen.findByText('No rope yet.')).toBeInTheDocument();
-  });
-
-  it('shows one plain status word from the live drift score', async () => {
+  it('shows the day as plain numbers, with no judging words', async () => {
     mockBackend({
       '/api/daemon/health': { status: 'ok' },
-      '/api/realtime/status': { tracker: { last_score: 0.31, enter_threshold: 0.6, exit_threshold: 0.45 } },
-      '/api/detections': { detections: [{ timestamp: '2026-11-11T10:00:00Z', model_verdict: 'NOT_DISTRACTED', reason: 'train.py matches the goal' }] },
-      '/api/interventions/feed': { interventions: [] }, '/api/break': { break: { active: false } },
-      '/api/intents': { intents: [{ id: 'i1', text: 'finish the ML assignment', created_at: '2026-11-11T09:40:00Z' }] },
-      '/api/dashboard/summary': { daily: { timeline: [] } }, '/api/outcomes': { outcomes: [] },
-      '/api/meme-assets/stats': { assets: 3, favorites: 0, by_sentiment: {}, curated_assets: 0, active_responses: 0 },
+      '/api/dashboard/summary': { daily: { timeline: [seg('WindowsTerminal', '✳ Whether to keep', 30)] } },
+      '/api/background': BACKGROUND,
     });
     render(<App />);
-    expect(await screen.findByText('finish the ML assignment')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByText('ON TASK').length).toBeGreaterThan(0));
-    expect(screen.getByText(/doing what you said/i)).toBeInTheDocument();
+    expect((await screen.findAllByText('Terminal')).length).toBeGreaterThan(0);   // friendly app name
+    for (const word of [/on task/i, /off task/i, /drift/i, /distract/i, /nudge/i]) {
+      expect(screen.queryByText(word)).not.toBeInTheDocument();
+    }
   });
 
-  it('opens the nudge overlay for a delivered, unanswered nudge', async () => {
-    mockBackend({
-      '/api/daemon/health': { status: 'ok' }, '/api/realtime/status': { tracker: { last_score: 0.8 } }, '/api/detections': { detections: [] },
-      '/api/interventions/feed': { interventions: [{ id: 'n1', created_at: new Date().toISOString(), delivered: true, interacted: false, message: { title: 'You said you were locking in.', body: 'Bold of you.' } }] },
-      '/api/break': { break: { active: false } }, '/api/intents': { intents: [{ id: 'i1', text: 'study', created_at: '2026-11-11T09:40:00Z' }] },
-      '/api/dashboard/summary': { daily: { timeline: [] } }, '/api/outcomes': { outcomes: [] },
-      '/api/meme-assets/stats': { assets: 0, favorites: 0, by_sentiment: {}, curated_assets: 0, active_responses: 0 },
-      '/api/responses/effectiveness': { effectiveness: [] },
-    });
+  it('has only the three analytics pages in the nav', async () => {
+    mockBackend({ '/api/daemon/health': { status: 'ok' }, '/api/dashboard/summary': { daily: { timeline: [] } }, '/api/background': BACKGROUND });
     render(<App />);
-    expect(await screen.findByRole('dialog', { name: /nudge/i })).toBeInTheDocument();
-    expect(screen.getByText('You said you were locking in.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /LOCKING IN/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /GIVE ME 5 MIN/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /THIS IS INTENTIONAL/ })).toBeInTheDocument();
+    const nav = await screen.findByRole('navigation', { name: 'Pages' });
+    expect(nav.querySelectorAll('a')).toHaveLength(3);
+    expect(nav).toHaveTextContent('Today');
+    expect(nav).toHaveTextContent('Week');
+    expect(nav).toHaveTextContent('Models');
   });
 });

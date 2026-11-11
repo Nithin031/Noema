@@ -1,10 +1,6 @@
 // Pure adapters: Noema backend payloads -> the shapes the riso screens draw.
 // No React, no fetching. Everything here is unit-tested (adapt.test.ts).
-import type {
-  Detection, DailySegment, DailySummary, InterventionFeedRow, MemeAsset,
-  OutcomeRow, RealtimeStatus, ResponseEffectivenessRow,
-} from '../api/noema';
-import type { BehaviorState, Verdict } from './contracts';
+import type { DailySegment, DailySummary } from '../api/noema';
 
 export type Kind = 'aligned' | 'drifting' | 'unknown' | 'afk';
 
@@ -38,37 +34,6 @@ export function fmtClock(iso: string | Date | null | undefined): string {
 
 /** Minutes since local midnight. */
 export const localMinutes = (d: Date) => d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
-
-// ---- drift / behavior --------------------------------------------------
-
-export type DriftView = {
-  score: number | null;      // null = no realtime reading yet
-  enter: number;
-  exit: number;
-  state: BehaviorState;
-};
-
-export function driftView(rt: RealtimeStatus | null | undefined): DriftView {
-  const enter = rt?.tracker?.enter_threshold ?? rt?.detector?.enter_threshold ?? 0.6;
-  const exit = rt?.tracker?.exit_threshold ?? rt?.detector?.exit_threshold ?? 0.45;
-  const raw = rt?.tracker?.last_score;
-  const score = typeof raw === 'number' && Number.isFinite(raw) ? clamp(raw) : null;
-  return { score, enter, exit, state: stateFromScore(score, enter, exit) };
-}
-
-export function stateFromScore(score: number | null, enter = 0.6, exit = 0.45): BehaviorState {
-  if (score === null || score < exit) return 'LOCKED_IN';
-  if (score < enter) return 'WOBBLING';
-  return 'DRIFTING';
-}
-
-const VERDICTS: Verdict[] = ['NOT_DISTRACTED', 'UNCERTAIN', 'DISTRACTED', 'INTENTIONAL_BREAK'];
-
-export function verdictOf(d: Detection | null | undefined): { verdict: Verdict | null; rationale: string } {
-  const raw = String(d?.model_verdict ?? '').trim().toUpperCase();
-  const verdict = (VERDICTS as string[]).includes(raw) ? (raw as Verdict) : null;
-  return { verdict, rationale: String(d?.reason ?? '').trim() };
-}
 
 // ---- episodes / timeline ----------------------------------------------
 
@@ -224,89 +189,3 @@ export function weekRows(daily: DailySummary | undefined, today = new Date()): D
   return rows;
 }
 
-export type Hotspot = { n: string; k: string; t: string };
-
-export function hotspots(daily: DailySummary | undefined): Hotspot[] {
-  const drift = toSegs(daily?.timeline).filter((s) => s.kind === 'drifting');
-  if (!drift.length) return [];
-  const out: Hotspot[] = [];
-  const byHour = new Array<number>(24).fill(0);
-  let total = 0;
-  for (const s of drift) { byHour[s.start.getHours()] += s.minutes; total += s.minutes; }
-  // busiest consecutive 2-hour window
-  let best = 0, bestH = 0;
-  for (let h = 0; h < 23; h++) { const v = byHour[h] + byHour[h + 1]; if (v > best) { best = v; bestH = h; } }
-  out.push({
-    n: `${String(bestH).padStart(2, '0')}–${String(bestH + 2).padStart(2, '0')}h`, k: 'TIME OF DAY',
-    t: `${Math.round((best / total) * 100)}% of all drift starts in this window.`,
-  });
-  const apps = tally(drift, (s) => s.app, 1);
-  if (apps[0]) out.push({ n: fmtMin(apps[0].minutes), k: 'APP', t: `${apps[0].name} was the biggest pull this week.` });
-  const longest = [...drift].sort((a, b) => b.minutes - a.minutes)[0];
-  out.push({ n: `${Math.round(longest.minutes)} min`, k: 'LONGEST STRETCH', t: `${longest.app}${longest.title ? ` — ${longest.title}` : ''}.` });
-  return out;
-}
-
-// ---- nudge / outcomes --------------------------------------------------
-
-/** The nudge the user still has to answer: delivered, not yet interacted, recent. */
-export function openNudge(feed: InterventionFeedRow[] | undefined, now = Date.now(), maxAgeMs = 15 * 60_000): InterventionFeedRow | null {
-  for (const row of feed ?? []) {
-    if (!row.delivered || row.interacted) continue;
-    const at = row.created_at ? new Date(row.created_at).getTime() : 0;
-    if (now - at <= maxAgeMs) return row;
-  }
-  return null;
-}
-
-export type Attr = 'DIRECT' | 'AMBIENT' | 'NONE';
-export function attrOf(o: OutcomeRow | null | undefined): Attr | null {
-  const a = String(o?.attribution ?? '').toUpperCase();
-  return a === 'DIRECT' || a === 'AMBIENT' || a === 'NONE' ? a : null;
-}
-
-/** Recovery rate per local day over the last n days (percent, null = no outcomes). */
-export function recoveryByDay(outcomes: OutcomeRow[] | undefined, days = 14, today = new Date()): (number | null)[] {
-  const out: { tot: number; rec: number }[] = Array.from({ length: days }, () => ({ tot: 0, rec: 0 }));
-  const start = new Date(today); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - (days - 1));
-  for (const o of outcomes ?? []) {
-    if (o.recovery_status === 'PENDING') continue;
-    const d = new Date(o.intervention_time); d.setHours(0, 0, 0, 0);
-    const i = Math.round((d.getTime() - start.getTime()) / 86_400_000);
-    if (i < 0 || i >= days) continue;
-    out[i].tot += 1; if (o.recovery_status === 'RECOVERED') out[i].rec += 1;
-  }
-  return out.map((x) => (x.tot ? Math.round((x.rec / x.tot) * 100) : null));
-}
-
-export function overallRecovery(outcomes: OutcomeRow[] | undefined): number | null {
-  const done = (outcomes ?? []).filter((o) => o.recovery_status !== 'PENDING');
-  if (!done.length) return null;
-  return Math.round((done.filter((o) => o.recovery_status === 'RECOVERED').length / done.length) * 100);
-}
-
-// ---- memes -------------------------------------------------------------
-
-export type MemeStat = { shown: number; recovered: number; outOf10: number | null };
-
-/** Per-asset effectiveness = sum of its linked responses' recoveries / shown. */
-export function memeStats(asset: MemeAsset, eff: ResponseEffectivenessRow[]): MemeStat {
-  const ids = new Set((asset.responses ?? []).map((r) => r.id));
-  let shown = 0, recovered = 0;
-  for (const r of eff) if (ids.has(r.id)) { shown += r.times_shown; recovered += r.recovery_count; }
-  return { shown, recovered, outOf10: shown ? Math.round((recovered / shown) * 10) : null };
-}
-
-export function assetStatus(a: MemeAsset, stat: MemeStat): 'active' | 'benched' | 'untested' {
-  if (a.enabled === false) return 'benched';
-  return stat.shown ? 'active' : 'untested';
-}
-
-export function splitCaption(text: string | null | undefined): [string, string] {
-  const t = (text ?? '').replace(/\s+/g, ' ').trim();
-  if (!t) return ['', ''];
-  const words = t.split(' ');
-  if (words.length < 4) return [t, ''];
-  const mid = Math.ceil(words.length / 2);
-  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
-}
