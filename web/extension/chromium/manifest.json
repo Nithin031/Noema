@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Noema",
+  "version": "0.2.0",
+  "description": "Sends the active tab to your local Noema daemon (Brave and Edge) and shows its nudges.",
+  "minimum_chrome_version": "110",
+  "permissions": ["tabs", "storage", "notifications", "alarms"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1:8765/*", "http://localhost:8765/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Noema", "default_popup": "popup/popup.html", "default_icon": "assets/icon-128.png" },
+  "icons": { "128": "assets/icon-128.png" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/meme-renderer.js", "content/intervention-overlay.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,51 +1,19 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-import fs from 'fs/promises';
-import svgr from '@svgr/rollup';
-
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// https://vitejs.dev/config/
+// The daemon serves web/dist at http://127.0.0.1:8765/ (see api/server.py
+// `_frontend_response`), so the built app talks to its own origin by default.
 export default defineConfig({
-    resolve: {
-        alias: {
-            src: resolve(__dirname, 'src'),
-            '@': resolve(__dirname, 'src'),
-        },
-    },
-    optimizeDeps: {
-        esbuildOptions: {
-            plugins: [
-                {
-                    name: 'load-js-files-as-tsx',
-                    setup(build: {
-                        onLoad(
-                            options: { filter: RegExp },
-                            callback: (args: { path: string }) => Promise<{ loader: 'tsx'; contents: string }>,
-                        ): void;
-                    }) {
-                        build.onLoad(
-                            { filter: /src\\.*\.js$/ },
-                            async (args) => ({
-                                loader: 'tsx',
-                                contents: await fs.readFile(args.path, 'utf8'),
-                            })
-                        );
-                    },
-                },
-            ],
-        },
-    },
-
-    plugins: [svgr(), react()],
-    test: {
-        environment: 'jsdom',
-        setupFiles: ['./src/test-setup.ts'],
-        include: ['src/**/*.test.{ts,tsx}'],
-    },
+  resolve: { alias: { '@': resolve(__dirname, 'src') } },
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+  },
 });

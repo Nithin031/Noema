@@ -78,3 +78,23 @@ def test_goal_alignment_is_explainable_and_persistable():
     assert store.insert_alignment(alignment) is False
     assert store.query_alignments(intent_id=intent.id)[0].aligned is True
     store.close()
+
+
+def test_strict_alignment_flags_unrelated_work_but_default_does_not():
+    current = make_session()
+    intent = Intent(text="study for SM 300 end sem exam", goal="study for SM 300 end sem exam",
+                    keywords=("study", "sm", "300", "exam"),
+                    created_at=datetime(2026, 9, 4, 10, tzinfo=timezone.utc))
+    classification = Classification(
+        session_id=current.id, category="development", topic="noema", project=None,
+        activity_type="coding", productivity="productive", confidence=0.8, classification_status="classified",
+        provider="test", model="test")
+    default = GoalAligner().align(current, intent, classification)
+    strict = GoalAligner(strict_unrelated=True).align(current, intent, classification)
+    assert default.relation == "unknown"              # documented default: uncertainty never drifts
+    assert strict.relation == "misaligned"
+    assert "strict alignment" in strict.reason
+    # strict mode never flags work that DOES relate to the goal
+    related = Intent(text="fix reward.py", goal="fix reward.py", keywords=("reward",),
+                     created_at=datetime(2026, 9, 4, 10, tzinfo=timezone.utc))
+    assert GoalAligner(strict_unrelated=True).align(current, related, classification).relation != "misaligned"

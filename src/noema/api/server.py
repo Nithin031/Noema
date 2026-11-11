@@ -41,6 +41,9 @@ class NoemaApp:
     * ``POST /api/ingest/activitywatch`` with a bucket or list of buckets
     """
 
+    #: Directory holding the built web app. None = <repo>/web/dist (tests override it).
+    frontend_dist: Optional[Path] = None
+
     def __init__(self, service: NoemaService, daemon: Any = None):
         self.service = service
         self.daemon = daemon
@@ -104,34 +107,21 @@ class NoemaApp:
         )
         return [body]
 
-    #: Files the bundled dashboard is allowed to serve, by extension. Kept as
-    #: an allowlist (rather than serving anything under the directory) so a
-    #: path-traversal attempt can never read arbitrary package files.
-    _DASHBOARD_ASSET_TYPES = {
-        ".html": "text/html; charset=utf-8",
-        ".css": "text/css; charset=utf-8",
-        ".js": "application/javascript; charset=utf-8",
-        ".svg": "image/svg+xml",
-    }
+    _FRONTEND_MISSING_HTML = (
+        "<!doctype html><meta charset=utf-8><title>Noema</title>"
+        "<body style=\"font-family:ui-monospace,monospace;background:#F3ECDD;color:#161411;padding:48px\">"
+        "<h1>Noema daemon is running.</h1>"
+        "<p>The dashboard has not been built yet. From the repository root run:</p>"
+        "<pre>cd web &amp;&amp; npm install &amp;&amp; npm run build</pre>"
+        "<p>then reload this page. The JSON API is available under <code>/api/</code>.</p>"
+    )
 
-    def _static_response(self, start_response: Callable, filename: str, content_type: str = ""):
-        """Serve one bundled dashboard asset without exposing filesystem paths."""
-        dashboard_dir = Path(__file__).resolve().parent / "dashboard"
-        suffix = Path(filename).suffix.lower()
-        resolved_type = content_type or self._DASHBOARD_ASSET_TYPES.get(suffix)
-        if "/" in filename or filename.startswith(".") or resolved_type is None:
-            return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
-        candidate = (dashboard_dir / filename).resolve()
-        try:
-            candidate.relative_to(dashboard_dir.resolve())
-        except ValueError:
-            return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
-        if not candidate.is_file():
-            return self._response(start_response, HTTPStatus.NOT_FOUND, {"error": "not_found"})
-        body = candidate.read_bytes()
+    def _frontend_missing_response(self, start_response: Callable):
+        """Plain page shown when web/dist has not been built (no bundled fallback UI)."""
+        body = self._FRONTEND_MISSING_HTML.encode("utf-8")
         start_response(
             "200 OK",
-            [("Content-Type", resolved_type), ("Content-Length", str(len(body))),
+            [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body))),
              ("Cache-Control", "no-store"),
              ("Access-Control-Allow-Origin", self._cors_origin()),
              ("Vary", "Origin")],
@@ -144,7 +134,7 @@ class NoemaApp:
         dist_dir = next(
             (
                 candidate.resolve()
-                for candidate in (repo_root / "web" / "dist",)
+                for candidate in (self.frontend_dist or repo_root / "web" / "dist",)
                 if candidate.is_dir()
             ),
             None,
@@ -535,17 +525,14 @@ class NoemaApp:
             if method == "OPTIONS":
                 return self._response(start_response, HTTPStatus.NO_CONTENT, {})
 
-            if method == "GET" and (path == "/" or path in {"/dashboard", "/dashboard/"} or path.startswith("/assets/")):
+            if method == "GET" and (
+                path in {"/", "/dashboard", "/dashboard/", "/favicon.ico"} or path.startswith("/assets/")
+            ):
                 frontend = self._frontend_response(start_response, path)
                 if frontend is not None:
                     return frontend
-
-            if method == "GET" and path in {"/", "/dashboard", "/dashboard/"}:
-                return self._static_response(start_response, "index.html")
-            if method == "GET" and path in {
-                "/tokens.css", "/site.css", "/stages.js", "/app.js",
-            }:
-                return self._static_response(start_response, path.lstrip("/"))
+                if path in {"/", "/dashboard", "/dashboard/"}:
+                    return self._frontend_missing_response(start_response)
 
             if method == "GET" and path == "/health":
                 return self._response(start_response, HTTPStatus.OK, {"status": "ok"})
@@ -634,6 +621,34 @@ class NoemaApp:
                 else:
                     debug["ollama_available"] = False
                 return self._response(start_response, HTTPStatus.OK, debug)
+
+            if method == "GET" and path in {"/api/llm/lanes", "/llm/lanes"}:
+                from noema.infrastructure.llm_lane import lane_status
+                from noema.infrastructure.providers import CLASSIFICATION_MODELS, REASONING_MODELS
+
+                # Report what the RUNNING daemon is actually configured with, never constants,
+                # so the UI cannot drift out of sync with the backend.
+                cfg = getattr(self.daemon, "config", None)
+                provider = getattr(getattr(self.service, "classifier", None), "provider", None)
+                chain = [{"name": str(getattr(p, "name", "?")), "model": str(getattr(p, "model", ""))}
+                         for p in getattr(provider, "providers", [])]
+                return self._response(start_response, HTTPStatus.OK, {
+                    "order": ["web_llm", "claude_code", "gemini"],
+                    "lanes": lane_status(),
+                    "chain": chain,
+                    "tiers": {
+                        "classification": list(getattr(cfg, "classification_models", None) or CLASSIFICATION_MODELS),
+                        "reasoning": list(getattr(cfg, "reasoning_models", None) or REASONING_MODELS),
+                    },
+                    "settings": {
+                        "ollama_enabled": bool(getattr(cfg, "ollama_enabled", False)),
+                        "strict_alignment": bool(getattr(cfg, "strict_alignment", False)),
+                        "webllm_enabled": bool(getattr(cfg, "webllm_enabled", False)),
+                        "webllm_provider": str(getattr(cfg, "webllm_provider", "")),
+                        "claude_code_enabled": bool(getattr(cfg, "claude_code_enabled", False)),
+                        "claude_code_model": str(getattr(cfg, "claude_code_model", "")),
+                    },
+                })
 
             if method == "GET" and path in {"/api/debug/quotas", "/debug/quotas"}:
                 return self._response(start_response, HTTPStatus.OK, self.service.provider_quotas())

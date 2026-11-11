@@ -291,6 +291,7 @@ def test_classifier_wires_openrouter_gemini_ollama_order():
     with test_key():
         config = DaemonConfig(
             provider="hosted",
+            ollama_enabled=True,  # opt in: it is off by default now
             openrouter_api_key_env=TEST_KEY_ENV,
             openrouter_free_models=["minimax/minimax-m3:free"],
         )
@@ -406,7 +407,7 @@ def test_config_openrouter_and_gemini_model_lists():
         "gemini-3.5-flash",
         "gemini-3.8-flash",
     ]
-    assert config.ollama_enabled is True
+    assert config.ollama_enabled is False  # Ollama is opt-in now
 
 
 def test_config_model_lists_accept_comma_strings_and_env():

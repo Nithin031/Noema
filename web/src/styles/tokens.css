@@ -1,0 +1,42 @@
+/* Noema — riso zine tokens. Values authored at 3840x2160; divide sizes by 2 for a 1920 layout. */
+:root {
+  /* color */
+  --paper: #F3ECDD;        /* app background */
+  --paper-hi: #FFFDF6;     /* cards, receipts, polaroids */
+  --paper-lo: #E4DCCB;     /* skeletons, graveyard */
+  --ink: #161411;          /* text, outlines, hard shadows */
+  --drift: #FF5B1F;        /* drift / alerts — fill only; ink text on top (contrast ≥4.5) */
+  --drift-dark: #C9420E;   /* stripes inside drift fills */
+  --intent: #2B4BFF;       /* intent / aligned — paper text on top */
+  --intent-soft: #6F86FF;  /* secondary aligned category */
+  --recovered: #3E7B4F;    /* ONLY "recovered" / healthy */
+  --muted: #8C8270;        /* neutral data, unknown apps */
+  --hatch: #C9C0AE;        /* AFK hatch */
+  --tape: rgba(222,204,160,.85);
+
+  /* type */
+  --font-display: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', sans-serif; /* 800, tracking -0.04em */
+  --font-mono: 'DM Mono', monospace;                 /* all data/labels, tabular-nums */
+  --font-serif: 'Instrument Serif', serif;           /* italic asides only */
+  --font-hand: 'Caveat', cursive;                    /* margin notes only */
+  --fs-hero: 156px; --fs-h1: 140px; --fs-h2: 96px; --fs-h3: 60px;
+  --fs-aside: 56px; --fs-body: 34px; --fs-data: 28px; --fs-label: 26px; --fs-small: 22px;
+  --label-tracking: .14em;
+
+  /* lines & shadows (no blur, no gradients, no glass) */
+  --stroke: 5px; --stroke-thin: 3px; --stroke-heavy: 6px;
+  --shadow-card: 14px 14px 0 var(--ink);
+  --shadow-button: 0 14px 0 var(--ink);
+  --halftone: radial-gradient(var(--ink) 2.6px, transparent 3.2px) 0 0 / 11px 11px;
+  --paper-grain: radial-gradient(rgba(22,20,17,.08) 1.2px, transparent 1.7px) 0 0 / 8px 8px;
+  --misregister-orange: 6px 5px 0 rgba(255,91,31,.85);
+  --misregister-blue: 6px 5px 0 rgba(43,75,255,.6);
+
+  /* space & shape */
+  --page-x: 120px; --gap-lg: 60px; --gap-md: 40px; --gap-sm: 20px;
+  --pad-card: 40px; --radius: 0; --radius-pill: 40px;
+  --tilt-min: -2deg; --tilt-max: 2deg;
+  --focus: 6px solid var(--intent); --focus-offset: 6px;
+  --hit-min: 64px; /* 44px at 1x; 4K mock uses ≥64 */
+}
+@media (prefers-reduced-motion: reduce) { :root { --motion: 0; } }

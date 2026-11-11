@@ -184,7 +184,12 @@ class AlignmentResult:
 class GoalAligner:
     """Compute goal alignment without allowing a model to trigger actions."""
 
-    def __init__(self, threshold: float = 0.35):
+    def __init__(self, threshold: float = 0.35, strict_unrelated: bool = False):
+        # Strict ("exam mode"): confident work that shares NO topic with the stated goal
+        # counts as off-task, not "unknown". Default off: the documented design is that
+        # uncertainty never drifts, because lexical matching can miss differently-worded
+        # but related work. Turn it on when you want to be called out for any side project.
+        self.strict_unrelated = bool(strict_unrelated)
         if not 0 <= threshold <= 1:
             raise ValueError("alignment threshold must be between 0 and 1")
         self.threshold = threshold
@@ -281,6 +286,15 @@ class GoalAligner:
             and quality in _MISALIGN_GOOD_QUALITY
         )
 
+        strictly_unrelated = (
+            self.strict_unrelated
+            and classified
+            and not overlap
+            and not positively_unrelated
+            and classification_confidence >= _MISALIGN_MIN_CONFIDENCE
+            and productivity == "productive"
+        )
+
         if aligned:
             relation = RELATION_ALIGNED
             relevance = RELEVANCE_HIGH if score >= 0.6 else RELEVANCE_MEDIUM
@@ -289,7 +303,7 @@ class GoalAligner:
             # borderline. Not confident enough to call it either way.
             relation = RELATION_UNKNOWN
             relevance = RELEVANCE_LOW
-        elif positively_unrelated:
+        elif positively_unrelated or strictly_unrelated:
             # No overlap AND positively distractive with strong evidence: the
             # activity is understood and is not about the goal.
             relation = RELATION_MISALIGNED
@@ -308,7 +322,9 @@ class GoalAligner:
                 reason_parts.append("activity type matches goal verb")
             if productivity_bonus:
                 reason_parts.append("classified productive")
-        if relation == RELATION_MISALIGNED:
+        if relation == RELATION_MISALIGNED and strictly_unrelated:
+            reason_parts.append("work unrelated to the goal (strict alignment)")
+        elif relation == RELATION_MISALIGNED:
             reason_parts.append("distractive activity unrelated to the goal")
         elif relation == RELATION_UNKNOWN and not overlap:
             reason_parts.append("insufficient evidence to relate activity to the goal")

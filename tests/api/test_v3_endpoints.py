@@ -6,7 +6,7 @@ import json
 from noema.api import NoemaService, create_app
 from noema.domain.behavior import BehaviorObservation, BehaviorState
 from noema.domain.sessions import ActivitySession
-from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter
+from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter, ActivityWatchClient
 from noema.infrastructure.database import SQLiteStore
 
 
@@ -104,3 +104,18 @@ def test_intervention_feed_and_feedback():
         assert status.startswith("400")
     finally:
         store.close()
+
+
+def test_browser_events_are_recorded_under_the_real_browser_not_firefox():
+    store = SQLiteStore()
+    service = NoemaService(ActivityWatchAdapter(ActivityWatchClient("http://127.0.0.1:9")), store)
+    service.browser_bridge.register("brave", "laptop", "brave-1")
+    service.report_browser_event("brave-1", {
+        "event_type": "navigation_changed", "tab_id": "1", "window_id": "1",
+        "url": "https://www.example.com/page?q=1", "title": "Example", "private": False,
+        "timestamp": "2026-11-11T10:00:00Z"})
+    rows = store.query_recent_events(limit=5)
+    ev = rows[0].event
+    assert ev.app == "brave" and ev.source == "browser_extension"
+    assert ev.domain == "example.com"
+    store.close()

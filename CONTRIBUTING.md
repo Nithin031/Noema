@@ -38,11 +38,11 @@ change; regression tests live in `tests/regression/`.
 
 ## Frontend
 
-The dashboard served by the daemon is plain static HTML/CSS/JS in
-`src/noema/api/dashboard/` and needs **no build step**. An optional richer
-React frontend is **not included in this repository**; if you add one under
-`web/`, build it with its own tooling into `web/dist/` (the daemon serves
-that in preference to the bundled dashboard when present).
+The dashboard is the React app in `web/` (Vite + React + TypeScript, plain CSS from
+`web/src/styles/tokens.css`). Build it with `cd web && npm install && npm run build`;
+the daemon serves `web/dist/`. Before sending frontend changes run `npm run lint`,
+`npm test` and `npm run build` (type errors block the build). Backend payloads are
+mapped to what each screen draws in `web/src/lib/adapt.ts`, which is unit-tested.
 
 ## Architecture & where code belongs
 

@@ -7,14 +7,14 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from noema.api import NoemaService, serve
 from noema.infrastructure.activity_sources.activitywatch import ActivityWatchAdapter, ActivityWatchClient
 from noema.infrastructure.database import SQLiteStore
 from noema.classification.core import Classifier
 from noema.infrastructure.providers import FAST_DISTRACTION_MODEL, GeminiProvider, ProviderChain, OllamaProvider, OpenRouterProvider
-from noema.domain.intent import IntentEngine
+from noema.domain.intent import GoalAligner, IntentEngine
 from noema.domain.intervention import (
     InterventionEngine,
     InterventionMode,
@@ -162,6 +162,19 @@ def _openrouter_providers(config: DaemonConfig) -> list:
     ]
 
 
+_EXTERNAL_CACHE: dict = {}
+
+
+def _external_providers(config: DaemonConfig) -> list:
+    """Web LLM + Claude Code lanes, built once per process and shared by every path."""
+    key = id(config)
+    if key not in _EXTERNAL_CACHE:
+        from noema.infrastructure.llm_lane import build_external_providers
+
+        _EXTERNAL_CACHE[key] = build_external_providers(config)
+    return _EXTERNAL_CACHE[key]
+
+
 def _classifier(config: DaemonConfig) -> Classifier:
     ollama = OllamaProvider(
         OllamaClient(
@@ -192,6 +205,8 @@ def _classifier(config: DaemonConfig) -> Classifier:
         for model in classification_models
     ]
     openrouter = _openrouter_providers(config)
+    # External lanes (web LLM, then Claude Code) come first; Gemini stays last.
+    external = _external_providers(config)
     # Persisted quota ledger lives next to the database so daily
     # request/token counts survive daemon restarts.
     usage_path = str(Path(config.db_path).expanduser().with_suffix(".usage.json"))
@@ -202,7 +217,7 @@ def _classifier(config: DaemonConfig) -> Classifier:
         provider = ProviderChain(hosted=hosted, ollama=ollama,
                                        usage_path=usage_path, include_ollama=False,
                                        day_timezone=config.timezone_name,
-                                       openrouter=openrouter)
+                                       openrouter=openrouter, external=external)
     elif config.provider == "ollama":
         provider = ollama or OllamaProvider()
     else:
@@ -210,7 +225,7 @@ def _classifier(config: DaemonConfig) -> Classifier:
                                        usage_path=usage_path,
                                        include_ollama=ollama is not None,
                                        day_timezone=config.timezone_name,
-                                       openrouter=openrouter)
+                                       openrouter=openrouter, external=external)
     return Classifier(provider=provider)
 
 
@@ -287,7 +302,10 @@ def _realtime_setup(service: NoemaService, config: DaemonConfig,
         # Explicit pin wins and leads the reasoning ranking.
         reasoning_models = [pinned] + [
             model for model in reasoning_models if model != pinned]
-    reasoning_providers = _gemini_providers(
+    from noema.infrastructure.llm_lane import realtime_view
+
+    external_rt = [realtime_view(p) for p in _external_providers(config)]
+    reasoning_providers = external_rt + _gemini_providers(
         reasoning_models, config, config.fast_model_timeout_seconds)
     fast_gemini = reasoning_providers[0] if reasoning_providers else None
     service.fast_verifier = FastModelVerifier(
@@ -305,17 +323,31 @@ def _realtime_setup(service: NoemaService, config: DaemonConfig,
 
     meme_models = list(getattr(config, "meme_models", None) or reasoning_models)
     service.intervention_reasoner = InterventionReasoner(
-        legs=_gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
+        legs=external_rt + _gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
         observer=getattr(chain, "observer", None),
     )
     service.meme_decider = MemeDecider(
-        legs=_gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
+        legs=external_rt + _gemini_providers(meme_models, config, config.fast_model_timeout_seconds),
         observer=getattr(chain, "observer", None),
     )
 
 
-def _local_ollama_client(config: DaemonConfig) -> OllamaClient:
-    """Use one configured local Ollama model for every generative feature."""
+class _NoLocalModel:
+    """Stands in for Ollama when it is disabled: fails instantly so callers use their heuristics."""
+
+    model = None
+
+    def generate_json(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+        raise ConnectionError("local model is disabled (ollama_enabled=false)")
+
+    def generate(self, *args: Any, **kwargs: Any) -> Any:
+        raise ConnectionError("local model is disabled (ollama_enabled=false)")
+
+
+def _local_ollama_client(config: DaemonConfig) -> Any:
+    """Use one configured local Ollama model for every generative feature, if enabled."""
+    if not config.ollama_enabled:
+        return _NoLocalModel()
     return OllamaClient(
         base_url=config.ollama_base_url,
         model=config.ollama_model,
@@ -387,6 +419,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             media_exception=config.afk_media_exception,
         ),
         classifier=classifier,
+        goal_aligner=GoalAligner(strict_unrelated=config.strict_alignment),
         intent_engine=IntentEngine(client=ollama_client),
         intervention_engine=_intervention_engine(config),
         meme_intelligence=MemeIntelligence(client=ollama_client),

@@ -1,4 +1,8 @@
-const API_BASE = (import.meta.env.VITE_NOEMA_API || import.meta.env.VITE_AI_ACTIVITY_API || 'http://127.0.0.1:8765').replace(/\/$/, '');
+// Production: the daemon serves this app, so the API is same-origin. `npm run dev` talks to the
+// local daemon directly. VITE_NOEMA_API overrides both.
+const API_BASE = (
+  import.meta.env.VITE_NOEMA_API ?? import.meta.env.VITE_AI_ACTIVITY_API ?? (import.meta.env.DEV ? 'http://127.0.0.1:8765' : '')
+).replace(/\/$/, '');
 
 export type ActivityEvent = {
   id?: string;
@@ -456,21 +460,7 @@ export type BrowserRegistration = {
   current_tab_id?: string | null;
 };
 
-export type DashboardData = {
-  health: Health;
-  events: ActivityEvent[];
-  sessions: Record<string, unknown>[];
-  meaningful: Record<string, unknown>[];
-  classifications: Record<string, unknown>[];
-  behavior: Behavior[];
-  interventions: Record<string, unknown>[];
-  outcomes: Record<string, unknown>[];
-  memories: Record<string, unknown>[];
-  registrations: BrowserRegistration[];
-  daily: DailySummary;
-};
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { cache: 'no-store', ...init });
   const text = await response.text();
   let payload: unknown;
@@ -517,37 +507,6 @@ export const api = {
   feedbackQuality: (model?: string) => request<FeedbackQuality>(`/api/feedback/quality${model ? `?model=${encodeURIComponent(model)}` : ''}`),
   presence: () => request<PresenceSnapshot>('/api/presence/current'),
 };
-
-export type CommandCenterData = DashboardData & {
-  classification: ClassificationStatus | null;
-  recent: ResultRow[];
-  recentMeaningful: MeaningfulVerdict[];
-  presence: PresenceSnapshot | null;
-};
-
-export async function loadCommandCenter(range = 'today'): Promise<CommandCenterData> {
-  const [dashboard, classification, recent, meaningful, presence] = await Promise.all([
-    loadDashboard(range),
-    api.classificationStatus().catch(() => null),
-    api.recent('today', 60).catch(() => ({ activities: [] as ResultRow[] })),
-    api.recentMeaningful(12).catch(() => ({ classifications: [] as MeaningfulVerdict[] })),
-    api.presence().catch(() => null),
-  ]);
-  return {
-    ...dashboard,
-    classification,
-    recent: recent.activities || [],
-    recentMeaningful: meaningful.classifications || [],
-    presence,
-  };
-}
-
-export async function loadDashboard(range = 'today'): Promise<DashboardData> {
-  const [health, summary, events, sessions, meaningful, classifications, behavior, interventions, outcomes, memories, registrations] = await Promise.all([
-    api.health(), api.summary(range), api.events(), api.sessions(), api.meaningful(), api.classifications(), api.behavior(), api.interventions(), api.outcomes(), api.memories(), api.registrations(),
-  ]);
-  return { health, daily: summary.daily, events: events.events || [], sessions: sessions.sessions || [], meaningful: meaningful.sessions || [], classifications: classifications.classifications || [], behavior: behavior.observations || [], interventions: interventions.interventions || [], outcomes: outcomes.outcomes || [], memories: memories.memories || [], registrations: registrations.registrations || [] };
-}
 
 export { API_BASE };
 
@@ -737,4 +696,62 @@ export const memeCenterApi = {
   registry: () => request<{ responses: CuratedResponse[] }>('/api/responses'),
   interventionFeed: (limit = 50) =>
     request<{ interventions: InterventionFeedRow[] }>(`/api/interventions/feed?limit=${limit}`),
+};
+
+// --- Command-center / nudge / week wiring (riso UI) ---------------------
+
+export type IntentRow = {
+  id?: string;
+  intent_id?: string;
+  text: string;
+  goal?: string;
+  created_at: string;
+};
+
+export type BreakStatus = {
+  active: boolean;
+  active_until?: string | null;
+  started_at?: string | null;
+  remaining_seconds?: number;
+  just_ended?: boolean;
+};
+
+export type OutcomeRow = InterventionOutcomeRow;
+
+/** Browser IANA timezone so "today" matches the user's calendar day, not UTC. */
+export function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+export const liveApi = {
+  intents: (limit = 20) => request<{ intents: IntentRow[] }>(`/api/intents?limit=${limit}`),
+  setIntent: (text: string) =>
+    request<IntentRow>('/api/intents', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ text }) }),
+  summary: (range: string, date?: string) => {
+    const q = new URLSearchParams({ range, timezone: browserTimezone() });
+    if (date) q.set('date', date);
+    return request<{ daily: DailySummary }>(`/api/dashboard/summary?${q.toString()}`);
+  },
+  breakStatus: () => request<{ break: BreakStatus }>('/api/break'),
+  startBreak: (interventionId: string, minutes = 5) =>
+    request<{ break: BreakStatus }>(`/api/interventions/${encodeURIComponent(interventionId)}/break`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ minutes }),
+    }),
+  interventionAction: (interventionId: string, action: 'LOCK_IN' | 'INTENTIONAL' | 'DISMISS') =>
+    request<Record<string, unknown>>(`/api/interventions/${encodeURIComponent(interventionId)}/action`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action, state: 'INTERACTED' }),
+    }),
+  interventionFeedback: (interventionId: string, feedback_type: 'INTERPRETATION' | 'USEFULNESS', value: string) =>
+    request<{ feedback: Record<string, unknown> }>(`/api/interventions/${encodeURIComponent(interventionId)}/feedback`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ feedback_type, value }),
+    }),
+  outcomes: (limit = 500) => request<{ outcomes: OutcomeRow[] }>(`/api/outcomes?limit=${limit}`),
+  providers: (days = 30) =>
+    request<{ providers: ProviderHealthRow[]; quota?: { models?: QuotaModelRow[] } }>(`/api/metrics/providers?days=${days}`),
 };

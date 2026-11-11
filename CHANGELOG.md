@@ -6,6 +6,12 @@ the version is `pyproject.toml` (mirrored by `noema.__version__`).
 
 ## [Unreleased]
 
+### Changed
+
+- **Own activity watcher.** ActivityWatch is now optional (`NOEMA_ACTIVITYWATCH_ENABLED=false` stops it being polled); Noema's native window and presence trackers are the watcher. The Firefox extension was replaced by a Manifest V3 extension for **Brave and Edge** (`web/extension/chromium/`; Chrome is ignored on purpose). Browser tab events are now recorded under the real browser (`brave`, `msedge`) with source `browser_extension` instead of a hardcoded "Firefox". Other changes: Ollama is off by default, opt-in strict alignment (`NOEMA_STRICT_ALIGNMENT`), opt-in web-LLM + Claude Code lanes (README §42), and the "How it thinks" and "Privacy" pages were removed.
+
+- **New UI: riso zine control room (Anchor and the Rope).** The React app in `web/` was rebuilt from the design handoff and wired to the live API (command center, nudge overlay, break mode, recovery, analytics, Meme Center, how-it-thinks, engine room, privacy, week). The old shadcn template UI and the bundled static dashboard (`src/noema/api/dashboard/`) were removed. The daemon serves `web/dist/` and shows a build hint when it is missing. The web API client is now same-origin in production. See README §41 for the endpoint map and known gaps.
+
 ### Added
 
 - **V3 Phase 10 Meme Center + meme dataset ingestion + Intervention Studio.**

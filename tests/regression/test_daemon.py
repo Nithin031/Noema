@@ -462,3 +462,10 @@ def test_stop_ollama_model_reports_subprocess_failure_without_raising(monkeypatc
     finally:
         store.close()
         Path(_test_path(".daemon-stop-fail.lock")).unlink(missing_ok=True)
+
+
+def test_activitywatch_disabled_is_never_polled():
+    from noema.config.settings import DaemonConfig
+
+    assert DaemonConfig().activitywatch_enabled is True            # back-compatible default
+    assert DaemonConfig(activitywatch_enabled="false").activitywatch_enabled is False

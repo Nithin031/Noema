@@ -114,6 +114,9 @@ class DaemonConfig:
     # variable are still accepted and mapped here, so existing files keep
     # working.
     telemetry_url: str = "http://127.0.0.1:5600"
+    # Optional legacy source. Noema has its own native watcher (foreground window + presence);
+    # set false when ActivityWatch is not installed so it is never polled.
+    activitywatch_enabled: bool = True
     # Noema-native telemetry collectors (preferred production path). The
     # ActivityWatch adapter stays available as an optional compatibility
     # source; either source (or both) can feed the pipeline.
@@ -149,9 +152,29 @@ class DaemonConfig:
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_free_models: Any = None
     openrouter_timeout_seconds: float = 60.0
+    # External LLM lanes (opt-in; see infrastructure/llm_lane.py). Strict order:
+    # web LLM -> Claude Code -> OpenRouter -> Gemini (always last). The web LLM is
+    # Noema's OWN web-llm-hub instance (own port + browser profile), never another
+    # app's. Requests yield to rivals listed in llm_lane_rivals (default: quaero).
+    webllm_enabled: bool = False
+    webllm_url: str = "http://127.0.0.1:8767"
+    webllm_provider: str = "deepseek"
+    webllm_timeout_seconds: float = 120.0
+    webllm_api_key_env: str = "NOEMA_WEBLLM_API_KEY"
+    claude_code_enabled: bool = False
+    claude_code_model: str = "claude-sonnet-5-5"
+    claude_code_effort: str = "low"
+    claude_code_binary: str = "claude"
+    claude_code_timeout_seconds: float = 120.0
+    llm_lane_dir: Optional[str] = None
+    llm_lane_rivals: Any = ("quaero",)
+    llm_lane_stale_seconds: float = 30.0
     openrouter_title: str = "Noema"
     # Local final fallback. False removes Ollama from the chain entirely.
-    ollama_enabled: bool = True
+    # Local Ollama is OFF by default: nothing in the product needs it. Intent parsing,
+    # meme generation and summaries use their built-in heuristics when no model is
+    # available, and classification/reasoning go web LLM -> Claude Code -> Gemini.
+    ollama_enabled: bool = False
     db_path: str = _default_db_path()
     lock_path: Optional[str] = None
     config_path: Optional[str] = None
@@ -236,6 +259,9 @@ class DaemonConfig:
     report_interval_seconds: float = 24 * 60 * 60.0
     query_limit: int = 1000
     execute_interventions: bool = True
+    # Opt-in strict alignment: confident work unrelated to the stated intent counts as
+    # drift (see GoalAligner). Off by default; "unknown never drifts" is the safe design.
+    strict_alignment: bool = False
     retry_base_seconds: float = 5.0
     retry_max_seconds: float = 5 * 60.0
     log_level: str = "INFO"
@@ -246,6 +272,7 @@ class DaemonConfig:
 
     def __post_init__(self) -> None:
         self.telemetry_url = str(self.telemetry_url).rstrip("/")
+        self.activitywatch_enabled = _boolean(self.activitywatch_enabled)
         self.native_enabled = _boolean(self.native_enabled)
         self.native_poll_seconds = _positive(
             "native_poll_seconds", self.native_poll_seconds
@@ -333,6 +360,20 @@ class DaemonConfig:
         )
         self.openrouter_enabled = _boolean(self.openrouter_enabled)
         self.ollama_enabled = _boolean(self.ollama_enabled)
+        self.webllm_enabled = _boolean(self.webllm_enabled)
+        self.claude_code_enabled = _boolean(self.claude_code_enabled)
+        self.webllm_url = str(self.webllm_url or "").strip().rstrip("/")
+        if self.webllm_enabled and not self.webllm_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
+            raise ValueError("webllm_url must be a loopback address (the hub holds your logged-in sessions)")
+        self.webllm_provider = str(self.webllm_provider or "deepseek").strip().lower()
+        self.webllm_timeout_seconds = _positive("webllm_timeout_seconds", self.webllm_timeout_seconds)
+        self.claude_code_timeout_seconds = _positive("claude_code_timeout_seconds", self.claude_code_timeout_seconds)
+        self.llm_lane_stale_seconds = _positive("llm_lane_stale_seconds", self.llm_lane_stale_seconds)
+        self.claude_code_effort = str(self.claude_code_effort or "low").strip().lower()
+        rivals = self.llm_lane_rivals
+        if isinstance(rivals, str):
+            rivals = rivals.split(",")
+        self.llm_lane_rivals = tuple(dict.fromkeys(str(r).strip().lower() for r in (rivals or ()) if str(r).strip()))
         self.openrouter_api_key_env = str(self.openrouter_api_key_env or "OPENROUTER_API_KEY").strip()
         if not self.openrouter_api_key_env:
             raise ValueError("openrouter_api_key_env cannot be empty")
@@ -427,6 +468,7 @@ class DaemonConfig:
         if self.intervention_max_ineffective_streak < 1:
             raise ValueError("intervention_max_ineffective_streak must be at least 1")
         self.execute_interventions = _boolean(self.execute_interventions)
+        self.strict_alignment = _boolean(self.strict_alignment)
         self.metrics_retention_days = int(self.metrics_retention_days)
         if self.metrics_retention_days < 1:
             raise ValueError("metrics_retention_days must be positive")
@@ -517,6 +559,7 @@ class DaemonConfig:
                     values[config_name] = os.environ[environment_name]
         mapping = {
             "NOEMA_TELEMETRY_URL": "telemetry_url",
+            "NOEMA_ACTIVITYWATCH_ENABLED": "activitywatch_enabled",
             "NOEMA_NATIVE_ENABLED": "native_enabled",
             "NOEMA_NATIVE_POLL_SECONDS": "native_poll_seconds",
             "NOEMA_NATIVE_HEARTBEAT_SECONDS": "native_heartbeat_seconds",
@@ -557,6 +600,20 @@ class DaemonConfig:
             "NOEMA_OPENROUTER_API_KEY_ENV": "openrouter_api_key_env",
             "OPENROUTER_FREE_MODELS": "openrouter_free_models",
             "NOEMA_OPENROUTER_TIMEOUT_SECONDS": "openrouter_timeout_seconds",
+            "NOEMA_STRICT_ALIGNMENT": "strict_alignment",
+            "NOEMA_WEBLLM_ENABLED": "webllm_enabled",
+            "NOEMA_WEBLLM_URL": "webllm_url",
+            "NOEMA_WEBLLM_PROVIDER": "webllm_provider",
+            "NOEMA_WEBLLM_TIMEOUT_SECONDS": "webllm_timeout_seconds",
+            "NOEMA_WEBLLM_API_KEY_ENV": "webllm_api_key_env",
+            "NOEMA_CLAUDE_CODE_ENABLED": "claude_code_enabled",
+            "NOEMA_CLAUDE_CODE_MODEL": "claude_code_model",
+            "NOEMA_CLAUDE_CODE_EFFORT": "claude_code_effort",
+            "NOEMA_CLAUDE_CODE_BINARY": "claude_code_binary",
+            "NOEMA_CLAUDE_CODE_TIMEOUT_SECONDS": "claude_code_timeout_seconds",
+            "NOEMA_LLM_LANE_DIR": "llm_lane_dir",
+            "NOEMA_LLM_LANE_RIVALS": "llm_lane_rivals",
+            "NOEMA_LLM_LANE_STALE_SECONDS": "llm_lane_stale_seconds",
             "NOEMA_OLLAMA_ENABLED": "ollama_enabled",
             "NOEMA_LOOKBACK_SECONDS": "lookback_seconds",
             "NOEMA_MAX_PER_RUN": "classification_max_per_run",
@@ -606,6 +663,13 @@ class DaemonConfig:
             "openrouter_base_url": self.openrouter_base_url,
             "openrouter_free_models": list(self.openrouter_free_models),
             "openrouter_timeout_seconds": self.openrouter_timeout_seconds,
+            "webllm_enabled": self.webllm_enabled,
+            "webllm_url": self.webllm_url,
+            "webllm_provider": self.webllm_provider,
+            "claude_code_enabled": self.claude_code_enabled,
+            "claude_code_model": self.claude_code_model,
+            "claude_code_effort": self.claude_code_effort,
+            "llm_lane_rivals": list(self.llm_lane_rivals),
             "openrouter_title": self.openrouter_title,
             "ollama_enabled": self.ollama_enabled,
             "db_path": self.db_path,
@@ -652,6 +716,7 @@ class DaemonConfig:
             "report_interval_seconds": self.report_interval_seconds,
             "query_limit": self.query_limit,
             "execute_interventions": self.execute_interventions,
+            "strict_alignment": self.strict_alignment,
             "retry_base_seconds": self.retry_base_seconds,
             "retry_max_seconds": self.retry_max_seconds,
             "metrics_retention_days": self.metrics_retention_days,

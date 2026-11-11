@@ -1257,14 +1257,14 @@ tests/
 
 web/                      # React frontend + browser extension (see §33)
 ├── src/                  # dashboard views, Meme Center, API client
-├── extension/            # Firefox extension client
+├── extension/chromium/   # Brave + Edge browser bridge (Manifest V3)
 ├── package.json          # npm scripts: lint, build, test
 └── ...                   # Vite + TypeScript tooling
 ```
 
 ## 33. Frontend and extension distribution
 
-The repository ships the daemon, the bundled static dashboard, and the React frontend source under `web/`. The frontend workspace contains:
+The repository ships the daemon and the React frontend source under `web/`. The frontend workspace contains:
 
 ```text
 web/
@@ -1274,7 +1274,7 @@ web/
 └── development tooling
 ```
 
-Build it with `npm run build` inside `web/` (requires Node + npm). `web/dist/` and `web/node_modules/` are gitignored build artifacts. If a built `web/dist/` exists locally, the daemon serves it at `http://127.0.0.1:8765/`; otherwise it falls back to the bundled static dashboard in `src/noema/api/dashboard/`.
+Build it with `npm run build` inside `web/` (requires Node + npm). `web/dist/` and `web/node_modules/` are gitignored build artifacts. The daemon serves `web/dist/` at `http://127.0.0.1:8765/`. If it has not been built, `/` shows a short page telling you to build it; there is no bundled fallback UI. For development, `npm run dev` serves the app with hot reload and talks to the daemon on `127.0.0.1:8765`.
 
 The daemon-side browser bridge is part of Noema. The browser extension client itself is not distributed as part of the Python package.
 
@@ -1462,21 +1462,36 @@ Noema is licensed under the Mozilla Public License 2.0. See `LICENSE.txt`. Third
 
 ## 41. Dashboard UI
 
-`src/noema/api/dashboard/` is the daemon's one bundled frontend, served at `/`, `/dashboard`, and `/dashboard/` (`GET /`, `NoemaApp._dispatch`). It replaced an earlier, purely illustrative landing page: that page's Nocturne visual design is now the live application shell, not a separate marketing site — there is exactly one shipped frontend, and it is wired to the real API below rather than to invented sample data.
+The UI is the React app in `web/`, built to `web/dist/` and served by the daemon at `/`. It is a "riso zine" control room built around the **Anchor and the Rope**: your intent is the anchor, your behavior is a rope that goes taut as drift rises, and snaps when a nudge fires. It is authored at 3840px wide and zoomed to the viewport. Routes are hash-based (`#/command`, `#/analytics`, `#/memes`, `#/thinks`, `#/engine`, `#/privacy`, `#/week`, `#/recovery`, `#/break`, and `#/demo` for a synthetic 14 s loop).
 
-Files: `index.html`, `tokens.css` (design tokens), `site.css` (layout and motion), `stages.js` (the static "How Noema thinks" stage picker — architecture documentation, not live state), `app.js` (all live wiring). No build step, no framework, no new runtime dependency — the same dependency-free philosophy as the rest of the local API.
+Every screen reads the live API; nothing is invented:
 
-`app.js` polls same-origin endpoints every 30 seconds and on load:
+| Screen | Endpoints |
+| --- | --- |
+| Command center | `/api/daemon/health`, `/api/realtime/status` (drift score + thresholds), `/api/detections` (Gemini verdict + rationale), `/api/intents` (get/set the intent), `/api/dashboard/summary` (episodes), `/api/interventions/feed` |
+| Nudge overlay | `/api/interventions/feed` (an unanswered, delivered nudge), `POST /api/interventions/{id}/action` (`LOCK_IN`, `INTENTIONAL`), `/break` (5-minute break), `/feedback`, `/api/meme-assets/{id}/image`, `/api/responses/effectiveness` |
+| Break mode | `/api/break`, `POST /api/interventions/{id}/break`, `LOCK_IN` to end early |
+| Recovery | `/api/interventions/feed` (outcome + attribution), `/api/detections`, `/api/outcomes` |
+| Analytics / Week | `/api/dashboard/summary?range=today&date=…` and `range=7d` |
+| Meme Center | `/api/meme-assets*`, `/api/responses`, `/api/responses/effectiveness` |
+| Engine room | `/api/debug/quotas`, `/api/metrics/models`, `/api/metrics/providers`, `/api/benchmarks` |
 
-- `GET /api/daemon/health` — hero status line and the Developers section's health panel.
-- `GET /api/classification/status` — the Models section's live classifier status, plus the `Run classification now` / `Stop local model` buttons (`POST /api/ai/run`, `POST /api/ollama/stop`).
-- `GET /api/meaningful-sessions`, `GET /api/behavior`, `GET /api/intents`, `GET /api/interventions/feed` — the four "What it actually does" cards (semantic episode, alignment/behavior, reasoning decision, delivered intervention).
-- `GET /api/events` — the live activity table.
-- `GET /api/responses/effectiveness` — the outcomes summary.
-- `GET /api/meme-assets/stats` — the Meme Center corpus counts.
-- `POST /api/intents` — the intent form.
-- `POST /api/interventions/{id}/action|break|feedback` — the three typed intervention buttons (`I'm locking in`, `Give me 5 min`, `This is intentional`), enabled only while a delivered intervention is actually open.
+Known gaps, shown honestly in the UI rather than faked:
 
-Every one of those cards ships with the same illustrative example it always had, now labelled `EXAMPLE`; the first successful fetch with real rows replaces it and flips the label to `LIVE`. A failed or empty fetch (daemon not attached, empty database, source unavailable) leaves the example in place rather than fabricating data — this applies from a fresh install with zero events all the way up to a fully populated instance.
+- **Privacy receipt.** Noema deliberately does not retain raw prompts or model responses, so there is no stored per-call receipt. The receipt is a labelled `EXAMPLE` of the evidence shape.
+- **Delete my data.** There is no delete endpoint yet; the button is disabled and the screen says how to remove the local database.
+- **Week view.** There is no "intended hours" source, so bars show active-at-computer vs aligned-with-intent.
+- **Engine room latency.** Only p50/p95 are recorded, not a time series, so it draws a p50-to-p95 bar rather than a sparkline.
+- The browser extension's in-page overlay (`web/extension/chromium/`, Brave and Edge) is separate from this app and has not been restyled.
 
-There is still no dedicated Meme Center *view* — the Meme Center section shows live corpus counts from `GET /api/meme-assets/stats` when a corpus is ingested, but browsing, tagging and favoriting only exist as REST endpoints under `/api/meme-assets/*` today; §37 and the status section on the page itself both say so rather than implying a UI that isn't there.
+## 42. External LLM lanes (web LLM + Claude Code)
+
+Off by default. When enabled, every model call tries, in strict order: **web LLM -> Claude Code -> OpenRouter -> Gemini**. Gemini is always last; on the free tier its top usable model (3.8 Flash) is only 5 requests/min and 20/day, and Gemini 4 Argon/Carbon have a free quota of zero, so they are never called.
+
+- **Web LLM** is DeepSeek, served by Noema's *own* web-llm-hub instance (`scripts/noema_webllm_hub.ps1`: port 8767, own Chrome profile). It is separate from Quaero's and from the standalone hub, because the hub continues the last chat by default and shares locks. Every Noema request asks for a fresh conversation. The URL must be loopback.
+- **Claude Code** runs `claude -p --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence` in its own empty working directory, one process per call, so it never mixes with an interactive session.
+- **Quaero first.** Before using the web LLM, Noema checks `<lane dir>/quaero.busy` (default `%LOCALAPPDATA%LLM-LANE`). A file touched in the last 30 s means Quaero has a request in flight, so Noema skips the web LLM without penalty and falls through. Noema writes `noema.busy` while it is calling. Quaero must write its heartbeat for this to work.
+- **Inside Noema**, one request at a time per lane; realtime nudge reasoning is served before background classification.
+- Status: `GET /api/llm/lanes` and the Engine Room page.
+
+**Privacy:** both lanes send the same bounded, privacy-filtered evidence that would otherwise go to Gemini, but to DeepSeek (via the hub) and Anthropic instead. That is why they are opt-in.

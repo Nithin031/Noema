@@ -1,15 +1,17 @@
-import { Suspense } from 'react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import '../src/css/globals.css';
-import App from './App.tsx';
-import Spinner from './views/spinner/Spinner.tsx';
-
-import { ThemeProvider } from './context/shadcntheme/ThemeContext.tsx';
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource/dm-mono/400.css';
+import '@fontsource/dm-mono/500.css';
+import '@fontsource/instrument-serif/400-italic.css';
+import '@fontsource/caveat/500.css';
+import '@fontsource/caveat/700.css';
+import './styles/tokens.css';
+import './styles/global.css';
+import App from './App';
 
 createRoot(document.getElementById('root')!).render(
-  <ThemeProvider defaultTheme="dark" storageKey="noema-theme">
-    <Suspense fallback={<Spinner />}>
-      <App />
-    </Suspense>
-  </ThemeProvider>,
+  <StrictMode>
+    <App />
+  </StrictMode>,
 );

@@ -271,6 +271,11 @@ MODEL_LIMITS = {
     "gemini-3.6-flash": (5, 250000, 20),
     "gemini-3.7-flash": (5, 250000, 20),
     "gemini-3.8-flash": (5, 250000, 20),
+    # Newer top models exist (Gemini 4 Argon / Carbon) but the operator's free-tier
+    # table shows 0 RPM / 0 TPM / 0 RPD for them, so they can never be called.
+    # Keep them at zero so a pinned config skips them silently; raise on a paid tier.
+    "gemini-4-argon": (0, 0, 0),
+    "gemini-4-carbon": (0, 0, 0),
     "gemini-embedding-001": (100, 30000, 1000),
     "gemini-embedding-002": (100, 30000, 1000),
     # OpenRouter free tier: conservative guards (free accounts are heavily
@@ -1233,8 +1238,11 @@ class ProviderChain:
     def __init__(self, hosted: Optional[list] = None, ollama: Optional[OllamaProvider] = None,
                  usage_path: Optional[Any] = None, include_ollama: bool = False,
                  day_timezone: str = "UTC", openrouter: Optional[list] = None,
-                 observer: Optional[Any] = None):
-        self.providers = list(openrouter or []) + list(
+                 observer: Optional[Any] = None, external: Optional[list] = None):
+        # Strict priority: external lanes (web LLM, then Claude Code) ->
+        # OpenRouter -> Gemini. Gemini is always the last resort.
+        self.external = list(external or [])
+        self.providers = self.external + list(openrouter or []) + list(
             hosted or [GeminiProvider(model=model) for model in self.HOSTED_MODELS])
         self.ollama = ollama or OllamaProvider()
         # Gemini-only mode: the local tail is never consulted, so a live
@@ -1255,7 +1263,8 @@ class ProviderChain:
         self._last_pack_stats: list = []
         self.rate_limits = {}
         for provider in self.providers:
-            rpm, tpm, rpd = MODEL_LIMITS.get(str(provider.model), DEFAULT_HOSTED_LIMITS)
+            rpm, tpm, rpd = getattr(provider, "limits", None) or MODEL_LIMITS.get(
+                str(provider.model), DEFAULT_HOSTED_LIMITS)
             self.rate_limits[provider.model] = QuotaState(
                 provider.name, str(provider.model),
                 rpm_limit=rpm, tpm_limit=tpm, rpd_limit=rpd,
@@ -1356,6 +1365,15 @@ class ProviderChain:
         if not self.ledger.check("llm", provider.model, billable, state.rpd_limit):
             return -1
         return billable
+
+    @staticmethod
+    def _lane_is_busy(provider: Any) -> bool:
+        """External lanes yield to higher-priority users (e.g. Quaero) without penalty."""
+        busy = getattr(provider, "lane_busy", None)
+        try:
+            return bool(callable(busy) and busy())
+        except Exception:
+            return False
 
     def _chain(self) -> list:
         tail = [self.ollama] if self.include_ollama and self.ollama is not None else []
@@ -1507,6 +1525,8 @@ class ProviderChain:
             batcher = getattr(provider, "classify_batch", None)
             if not callable(batcher):
                 continue
+            if self._lane_is_busy(provider):
+                continue
             self.attempts.append((provider.name, provider.model))
             if previous is not None:
                 logger.info(
@@ -1575,6 +1595,9 @@ class ProviderChain:
                 batch_utilization=utilization,
             )
             if call_error is not None:
+                if type(call_error).__name__ == "LaneBusy":
+                    previous = (provider.name, call_error)
+                    continue
                 exc = call_error
                 splittable = (
                     len(group) > 1
@@ -1719,6 +1742,8 @@ class ProviderChain:
         self.attempts = []
         previous: Optional[tuple] = None
         for provider in self._chain():
+            if self._lane_is_busy(provider):
+                continue
             self.attempts.append((provider.name, provider.model))
             if previous is not None:
                 logger.info(
@@ -1782,6 +1807,9 @@ class ProviderChain:
                 quota_after=self._quota_snapshot(state),
             )
             if call_error is not None:
+                if type(call_error).__name__ == "LaneBusy":
+                    previous = (provider.name, call_error)
+                    continue
                 status = _http_status(call_error)
                 logger.warning(
                     "MODEL_FAILED model=%s status=%s error=%s",

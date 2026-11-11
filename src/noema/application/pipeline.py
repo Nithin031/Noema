@@ -74,6 +74,10 @@ class IngestionResult:
         }
 
 
+#: Extension browser id -> the executable name the native window tracker records.
+_BROWSER_APP_NAMES = {"brave": "brave", "edge": "msedge", "chrome": "chrome", "firefox": "firefox"}
+
+
 class NoemaService:
     """Compose AW adapter, privacy policy, and application database."""
 
@@ -3058,15 +3062,17 @@ class NoemaService:
                     timestamp=browser_event.timestamp,
                     # A tab-activation observation needs a non-zero interval
                     # so it can form a session immediately. It is excluded
-                    # from ActivityWatch screen-time aggregation because its
-                    # metadata source is firefox_extension, not currentwindow.
+                    # from screen-time aggregation because its metadata source
+                    # is browser_extension, not the native window tracker.
                     duration=1.0,
                     device=registration.device_id,
-                    app="Firefox",
+                    # Same process name the native window tracker reports, so the
+                    # tab evidence and the window evidence describe one app.
+                    app=_BROWSER_APP_NAMES.get(registration.browser, registration.browser or "browser"),
                     title=browser_event.title,
                     domain=hostname,
                     url=browser_event.url,
-                    source="firefox_extension",
+                    source="browser_extension",
                     metadata={"event_type": browser_event.event_type, "private": False},
                     browser=registration.browser,
                     browser_window_id=browser_event.window_id,

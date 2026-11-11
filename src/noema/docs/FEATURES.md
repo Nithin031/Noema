@@ -170,7 +170,7 @@ hosting, no build step for the user.
 `NoemaApp` serves at `/` with no-cache headers. Views: command center
 (activity stream with verdict + evidence badges, pipeline queue, quotas),
 results & models, realtime, behavior. A dependency-free legacy dashboard
-(`src/noema/api/dashboard/`) remains as fallback. The frontend polls every
+was removed; the daemon now serves only the React app built from `web/`. The frontend polls every
 30s and never reinterprets backend state.
 
 ## 12. Observability and benchmarks

@@ -824,7 +824,12 @@ class NoemaDaemon:
         start, end = self._incremental_window(now)
         aw_error: Optional[str] = None
         try:
-            ingested = self.service.ingest_telemetry(start=start, end=end)
+            if getattr(self.config, "activitywatch_enabled", True):
+                ingested = self.service.ingest_telemetry(start=start, end=end)
+            else:
+                from noema.application.pipeline import IngestionResult
+
+                ingested = IngestionResult()  # native watcher only; ActivityWatch is never polled
         except (ConnectionError, OSError, TimeoutError) as exc:
             # The legacy ActivityWatch source is optional: record the
             # outage explicitly and continue with native telemetry instead
