@@ -117,6 +117,10 @@ class DaemonConfig:
     # Optional legacy source. Noema has its own native watcher (foreground window + presence);
     # set false when ActivityWatch is not installed so it is never polled.
     activitywatch_enabled: bool = True
+    # Background watcher: apps open behind the foreground window and apps playing audio.
+    # Stores only app names + seconds per day (never titles).
+    background_watch_enabled: bool = True
+    background_interval_seconds: float = 15.0
     # Noema-native telemetry collectors (preferred production path). The
     # ActivityWatch adapter stays available as an optional compatibility
     # source; either source (or both) can feed the pipeline.
@@ -279,6 +283,8 @@ class DaemonConfig:
     def __post_init__(self) -> None:
         self.telemetry_url = str(self.telemetry_url).rstrip("/")
         self.activitywatch_enabled = _boolean(self.activitywatch_enabled)
+        self.background_watch_enabled = _boolean(self.background_watch_enabled)
+        self.background_interval_seconds = _positive("background_interval_seconds", self.background_interval_seconds)
         self.native_enabled = _boolean(self.native_enabled)
         self.native_poll_seconds = _positive(
             "native_poll_seconds", self.native_poll_seconds
@@ -570,6 +576,8 @@ class DaemonConfig:
         mapping = {
             "NOEMA_TELEMETRY_URL": "telemetry_url",
             "NOEMA_ACTIVITYWATCH_ENABLED": "activitywatch_enabled",
+            "NOEMA_BACKGROUND_WATCH": "background_watch_enabled",
+            "NOEMA_BACKGROUND_INTERVAL_SECONDS": "background_interval_seconds",
             "NOEMA_NATIVE_ENABLED": "native_enabled",
             "NOEMA_NATIVE_POLL_SECONDS": "native_poll_seconds",
             "NOEMA_NATIVE_HEARTBEAT_SECONDS": "native_heartbeat_seconds",

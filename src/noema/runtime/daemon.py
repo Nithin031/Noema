@@ -728,6 +728,27 @@ class NoemaDaemon:
         # session rebuild, preserving the boundary without doubling the read.
         return start, now
 
+    def _background_tick(self) -> None:
+        """Sample background apps / audio (rate limited, never raises, no titles stored)."""
+        if not getattr(self.config, "background_watch_enabled", True):
+            return
+        try:
+            if getattr(self, "background", None) is None:
+                from noema.infrastructure.activity_sources.native_background import BackgroundWatcher
+
+                self.background = BackgroundWatcher(
+                    self.service.store, interval_seconds=self.config.background_interval_seconds,
+                    timezone_name=self.config.timezone_name)
+            self.background.tick()
+        except Exception:
+            self.logger.warning("background watcher unavailable", exc_info=True)
+
+    def background_status(self) -> Dict[str, Any]:
+        watcher = getattr(self, "background", None)
+        enabled = bool(getattr(self.config, "background_watch_enabled", True))
+        empty = {"now": {"open": [], "audio": [], "audio_supported": None}, "today": [], "error": None}
+        return {"enabled": enabled, **(watcher.status() if watcher is not None else empty)}
+
     def _native_collector_instance(self) -> Optional[Any]:
         """Lazily build the native collector set (None when disabled)."""
         if not self.config.native_enabled:
@@ -770,6 +791,7 @@ class NoemaDaemon:
         collector = self._native_collector_instance()
         if collector is None:
             return result
+        self._background_tick()
         if (time.monotonic() - self._native_last_poll
                 < max(0.0, float(self.config.native_poll_seconds))):
             result.update(status="throttled", detail="poll interval not elapsed",

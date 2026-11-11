@@ -1484,7 +1484,11 @@ Known gaps, shown honestly in the UI rather than faked:
 - **Engine room latency.** Only p50/p95 are recorded, not a time series, so it draws a p50-to-p95 bar rather than a sparkline.
 - The browser extension's in-page overlay (`web/extension/chromium/`, Brave and Edge) is separate from this app and has not been restyled.
 
-## 42. External LLM lanes (web LLM + Claude Code)
+## 42. Background watcher
+
+Besides the foreground window, Noema samples every 15 s which apps are open behind it and which are playing audio (Windows; audio needs the optional `pycaw`). Only app names and minutes per day are stored, never window titles, and none of it becomes a session or feeds classification. It shows in Analytics under "In the background" and at `GET /api/background`. Turn it off with `NOEMA_BACKGROUND_WATCH=false`.
+
+## 43. External LLM lanes (web LLM + Claude Code)
 
 Off by default. When enabled, every model call tries, in strict order: **web LLM -> Claude Code -> OpenRouter -> Gemini**. Gemini is always last; on the free tier its top usable model (3.8 Flash) is only 5 requests/min and 20/day, and Gemini 4 Argon/Carbon have a free quota of zero, so they are never called.
 

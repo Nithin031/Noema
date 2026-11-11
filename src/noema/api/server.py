@@ -622,6 +622,13 @@ class NoemaApp:
                     debug["ollama_available"] = False
                 return self._response(start_response, HTTPStatus.OK, debug)
 
+            if method == "GET" and path in {"/api/background", "/background"}:
+                status = getattr(self.daemon, "background_status", None)
+                payload = status() if callable(status) else {
+                    "enabled": False, "now": {"open": [], "audio": [], "audio_supported": None},
+                    "today": [], "error": None}
+                return self._response(start_response, HTTPStatus.OK, payload)
+
             if method == "GET" and path in {"/api/llm/lanes", "/llm/lanes"}:
                 from noema.infrastructure.llm_lane import lane_status
                 from noema.infrastructure.providers import CLASSIFICATION_MODELS, REASONING_MODELS

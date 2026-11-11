@@ -80,7 +80,7 @@ export type Seg = {
 const FRIENDLY: Record<string, string> = {
   windowsterminal: 'Terminal', wt: 'Terminal', brave: 'Brave', chrome: 'Chrome', msedge: 'Edge', firefox: 'Firefox',
   code: 'VS Code', explorer: 'File Explorer', 'whatsapp.root': 'WhatsApp', whatsapp: 'WhatsApp', snippingtool: 'Snipping Tool',
-  shellexperiencehost: 'Windows Shell', copilotapp: 'Copilot', opencode: 'OpenCode', notepad: 'Notepad', slack: 'Slack',
+  shellexperiencehost: 'Windows Shell', copilotapp: 'Copilot', opencode: 'OpenCode', winword: 'Word', excel: 'Excel', powerpnt: 'PowerPoint', olk: 'Outlook', outlook: 'Outlook', spotify: 'Spotify', discord: 'Discord', teams: 'Teams', notepad: 'Notepad', slack: 'Slack',
 };
 const BROWSERS = new Set(['Brave', 'Chrome', 'Edge', 'Firefox', 'Google Chrome']);
 

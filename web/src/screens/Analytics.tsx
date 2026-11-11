@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { liveApi } from '../api/noema';
+import { liveApi, request } from '../api/noema';
 import { useFetch } from '../hooks/useFetch';
-import { axisFor, fmtClock, fmtMin, hourly, place, STAMP, tally, toSegs, totals, type Kind, type Seg, type Tally } from '../lib/adapt';
+import { axisFor, fmtClock, fmtMin, friendlyApp, hourly, place, STAMP, tally, toSegs, totals, type Kind, type Seg, type Tally } from '../lib/adapt';
 import { Empty, Hatch, Title } from '../components/ui';
 
 const COLOR: Record<Kind, string> = { aligned: 'var(--intent)', drifting: 'var(--drift)', unknown: 'var(--muted)', afk: 'var(--hatch)' };
@@ -97,6 +97,48 @@ export default function Analytics() {
           </div>
         </>
       )}
+      {offset === 0 && <BackgroundCard />}
+    </div>
+  );
+}
+
+type Background = {
+  enabled: boolean;
+  now: { open: string[]; audio: string[]; audio_supported: boolean | null };
+  today: { app: string; open_minutes: number; audio_minutes: number }[];
+  error: string | null;
+};
+
+/** Apps open behind the foreground window and apps playing audio. App names and minutes only. */
+function BackgroundCard() {
+  const { data } = useFetch(() => request<Background>('/api/background'), 'bg');
+  const rows = (data?.today ?? []).filter((r) => r.open_minutes >= 1 || r.audio_minutes >= 1).slice(0, 8);
+  const max = Math.max(1, ...rows.map((r) => r.open_minutes));
+  return (
+    <div className="card" style={{ padding: '30px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <div>IN THE BACKGROUND · TODAY</div>
+        <div>{data?.now.audio.length ? `playing now: ${data.now.audio.map(friendlyApp).join(', ')}` : 'nothing playing'}</div>
+      </div>
+      {data && !data.enabled && <div style={{ fontSize: 28 }}>Background watching is off (NOEMA_BACKGROUND_WATCH).</div>}
+      {data?.enabled && data.now.audio_supported === false && (
+        <div style={{ fontSize: 26 }}>Audio detection needs pycaw: <code>pip install pycaw</code>. Open apps are still tracked.</div>
+      )}
+      {data?.enabled && rows.length === 0 && <div style={{ fontSize: 28 }}>Nothing has run behind your work yet. It fills in as you use the computer.</div>}
+      {rows.map((r) => (
+        <div key={r.app} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, fontSize: 28 }}>
+            <span>{friendlyApp(r.app)}</span>
+            <span style={{ fontWeight: 500 }}>
+              {r.audio_minutes >= 1 ? `audio ${fmtMin(r.audio_minutes)} · ` : ''}open {fmtMin(r.open_minutes)}
+            </span>
+          </div>
+          <div style={{ height: 20, border: '3px solid var(--ink)', background: 'var(--paper)', position: 'relative' }}>
+            <div style={{ height: '100%', width: `${(r.open_minutes / max) * 100}%`, background: 'var(--muted)' }} />
+            <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: `${(r.audio_minutes / max) * 100}%`, background: 'var(--intent)' }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

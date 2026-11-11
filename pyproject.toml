@@ -26,6 +26,11 @@ noema = "noema.cli.daemon:main"
 [tool.poetry.dependencies]
 python = "^3.9"
 google-genai = "*"
+# Optional: lets the background watcher tell which apps are playing audio (Windows only).
+pycaw = {version = "*", optional = true, markers = "sys_platform == 'win32'"}
+
+[tool.poetry.extras]
+audio = ["pycaw"]
 
 [tool.poetry.group.dev.dependencies]
 mypy = "*"
