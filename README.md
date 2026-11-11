@@ -1484,8 +1484,17 @@ Off by default. When enabled, every model call tries, in strict order: **web LLM
 
 - **Web LLM** is DeepSeek, served through a hub API of Noema's own (`scripts/noema_webllm_hub.ps1`, port 8767) that attaches to the DeepSeek browser you already have signed in, the same one Quaero uses: no new browser and no new login. Every Noema request asks for a fresh conversation, and the hub remembers one "last chat" per provider, so Quaero could in principle continue a chat Noema started; keep Quaero on another provider (it defaults to ChatGPT). The URL must be loopback.
 - **Claude Code** runs `claude -p --model claude-sonnet-5-5 --effort low --tools "" --no-session-persistence` in its own empty working directory, one process per call, so it never mixes with an interactive session.
-- **Quaero first.** Before using the web LLM, Noema checks `<lane dir>/quaero.busy` (default `%LOCALAPPDATA%LLM-LANE`). A file touched in the last 30 s means Quaero has a request in flight, so Noema skips the web LLM without penalty and falls through. Noema writes `noema.busy` while it is calling. Quaero must write its heartbeat for this to work.
+- **Quaero first.** Before using the web LLM, Noema checks `<lane dir>/quaero.busy` (default `%LOCALAPPDATA%\LLM-LANE`). A file touched in the last 30 s means Quaero has a request in flight, so Noema skips the web LLM without penalty and falls through. Noema writes `noema.busy` while it is calling. Quaero must write its heartbeat for this to work.
 - **Inside Noema**, one request at a time per lane; realtime nudge reasoning is served before background classification.
-- Status: `GET /api/llm/lanes` and the Engine Room page.
+- Status: `GET /api/llm/lanes` and the Models page.
 
 **Privacy:** both lanes send the same bounded, privacy-filtered evidence that would otherwise go to Gemini, but to DeepSeek (via the hub) and Anthropic instead. That is why they are opt-in.
+## 44. Beta: the coach version (drift, nudges, memes)
+
+The main UI is plain analytics. The earlier version, which judged on-task vs off-task and sent nudges, is kept as a **beta** and is not deleted:
+
+- **Where:** branch `beta-coach` (also tagged `v0.15-beta-coach`). It has the Command page (the Anchor and the Rope, drift status), the nudge overlay, break mode, recovery, Meme Center, "How it thinks" and Engine room.
+- **Try it:** `git switch beta-coach`, then `cd web && npm run build`, and set `NOEMA_REALTIME_ENABLED=true` and `NOEMA_EXECUTE_INTERVENTIONS=true` (optionally `NOEMA_STRICT_ALIGNMENT=1`) in `.env`. Restart the daemon. Switch back with `git switch main`.
+- **Backend:** the drift, alignment and intervention code is still in `main`; the main setup only switches it off, so the beta needs no backend changes.
+- **Status:** beta. It works, but its judging is a lexical guess (see strict alignment), which is why the main UI no longer shows it.
+
