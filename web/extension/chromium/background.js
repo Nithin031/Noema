@@ -53,7 +53,11 @@ importScripts("api/client.js");
     };
   }
 
+  // Browser-internal pages (edge://extensions, brave://settings, new tab, ...) are never reported.
+  function internalPage(url) { return /^(chrome|edge|brave|about|chrome-extension|devtools|view-source):/i.test(String(url || "")); }
+
   async function reportEvent(event) {
+    if (internalPage(event.url)) return;
     try { await api.event(state.instanceId, event); } catch { /* the poll loop re-registers */ }
   }
 
