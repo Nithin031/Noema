@@ -262,6 +262,12 @@ class DaemonConfig:
     # Opt-in strict alignment: confident work unrelated to the stated intent counts as
     # drift (see GoalAligner). Off by default; "unknown never drifts" is the safe design.
     strict_alignment: bool = False
+    # Words that mark work as on-task for any intent (side-project mode), e.g. the tool you
+    # build with while the stated intent is an exam. Matched against app/title/domain/url.
+    allow_rules: Any = ()
+    # The rules only apply while the intent contains one of these words (a build goal), never
+    # while studying: study time is isolated.
+    allow_rules_for: Any = ("build", "develop", "coding", "implement", "noema", "app", "fix")
     retry_base_seconds: float = 5.0
     retry_max_seconds: float = 5 * 60.0
     log_level: str = "INFO"
@@ -469,6 +475,10 @@ class DaemonConfig:
             raise ValueError("intervention_max_ineffective_streak must be at least 1")
         self.execute_interventions = _boolean(self.execute_interventions)
         self.strict_alignment = _boolean(self.strict_alignment)
+        rules = self.allow_rules.split(",") if isinstance(self.allow_rules, str) else (self.allow_rules or ())
+        self.allow_rules = tuple(dict.fromkeys(str(r).strip().casefold() for r in rules if str(r).strip()))
+        words = self.allow_rules_for.split(",") if isinstance(self.allow_rules_for, str) else (self.allow_rules_for or ())
+        self.allow_rules_for = tuple(dict.fromkeys(str(w).strip().casefold() for w in words if str(w).strip()))
         self.metrics_retention_days = int(self.metrics_retention_days)
         if self.metrics_retention_days < 1:
             raise ValueError("metrics_retention_days must be positive")
@@ -601,6 +611,8 @@ class DaemonConfig:
             "OPENROUTER_FREE_MODELS": "openrouter_free_models",
             "NOEMA_OPENROUTER_TIMEOUT_SECONDS": "openrouter_timeout_seconds",
             "NOEMA_STRICT_ALIGNMENT": "strict_alignment",
+            "NOEMA_ALLOW_RULES": "allow_rules",
+            "NOEMA_ALLOW_RULES_FOR": "allow_rules_for",
             "NOEMA_WEBLLM_ENABLED": "webllm_enabled",
             "NOEMA_WEBLLM_URL": "webllm_url",
             "NOEMA_WEBLLM_PROVIDER": "webllm_provider",
@@ -717,6 +729,8 @@ class DaemonConfig:
             "query_limit": self.query_limit,
             "execute_interventions": self.execute_interventions,
             "strict_alignment": self.strict_alignment,
+            "allow_rules": list(self.allow_rules),
+            "allow_rules_for": list(self.allow_rules_for),
             "retry_base_seconds": self.retry_base_seconds,
             "retry_max_seconds": self.retry_max_seconds,
             "metrics_retention_days": self.metrics_retention_days,

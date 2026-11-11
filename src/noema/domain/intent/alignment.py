@@ -31,7 +31,7 @@ means ``aligned`` and ``distractive`` never automatically means ``misaligned``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Sequence, Set
 
 from noema.classification.core import Classification
 from noema.domain.session_context import is_meaningful_session, search_values
@@ -181,10 +181,24 @@ class AlignmentResult:
         )
 
 
+#: An intent containing one of these words is a build goal, so the allow rules apply to it.
+DEFAULT_ALLOW_RULES_FOR = ("build", "develop", "coding", "implement", "noema", "app", "fix")
+
+
 class GoalAligner:
     """Compute goal alignment without allowing a model to trigger actions."""
 
-    def __init__(self, threshold: float = 0.35, strict_unrelated: bool = False):
+    def __init__(self, threshold: float = 0.35, strict_unrelated: bool = False,
+                 allow_rules: Sequence[str] = (),
+                 allow_rules_for: Sequence[str] = DEFAULT_ALLOW_RULES_FOR):
+        # Allow rules ("build mode"): any session whose app, title, domain or url contains one of
+        # these words counts as ON-TASK, but ONLY while the stated intent is a build goal (it
+        # contains one of allow_rules_for, e.g. "build"). Studying is isolated time: with an exam
+        # intent the rules are inactive, so building the app is off-task.
+        self.allow_rules_for = frozenset(
+            str(word).strip().casefold() for word in allow_rules_for if str(word).strip())
+        self.allow_rules = tuple(dict.fromkeys(
+            str(rule).strip().casefold() for rule in allow_rules if str(rule).strip()))
         # Strict ("exam mode"): confident work that shares NO topic with the stated goal
         # counts as off-task, not "unknown". Default off: the documented design is that
         # uncertainty never drifts, because lexical matching can miss differently-worded
@@ -193,6 +207,17 @@ class GoalAligner:
         if not 0 <= threshold <= 1:
             raise ValueError("alignment threshold must be between 0 and 1")
         self.threshold = threshold
+
+    def _allow_rule_hit(self, session: Any, intent: Optional[Intent] = None) -> Optional[str]:
+        if not self.allow_rules:
+            return None
+        if intent is not None and not (intent.search_tokens & self.allow_rules_for):
+            return None  # not a build goal: study time is isolated, rules stay off
+        haystack = " ".join(search_values(session)).casefold()
+        for rule in self.allow_rules:
+            if rule in haystack:
+                return rule
+        return None
 
     @staticmethod
     def _session_tokens(session: ActivitySession, classification: Optional[Classification]) -> Set[str]:
@@ -229,6 +254,7 @@ class GoalAligner:
         if (not isinstance(session, ActivitySession) and not is_meaningful_session(session)) or not isinstance(intent, Intent):
             raise TypeError("GoalAligner expects an ActivitySession or MeaningfulSession and an Intent")
 
+        rule_hit = self._allow_rule_hit(session, intent)
         intent_tokens = intent.search_tokens - _STOPWORDS
         session_tokens = self._session_tokens(session, classification) - _STOPWORDS
         overlap = intent_tokens & session_tokens
@@ -255,7 +281,9 @@ class GoalAligner:
             score = min(1.0, overlap_score * 0.60 + productivity_bonus + compatibility_bonus)
         else:
             score = 0.0
-        aligned = score >= self.threshold
+        if rule_hit and score < self.threshold:
+            score = max(score, 0.5)  # explicitly allowed: on-task by your own rule
+        aligned = score >= self.threshold or bool(rule_hit)
 
         quality = self._evidence_quality(session, classification)
         try:
@@ -315,6 +343,8 @@ class GoalAligner:
             relevance = RELEVANCE_UNKNOWN
 
         reason_parts = []
+        if rule_hit:
+            reason_parts.append(f"allowed by your rule: {rule_hit}")
         if overlap:
             reason_parts.append("shared tokens: " + ", ".join(sorted(overlap)))
             # Bonus reasons only count when overlap let them contribute (F1).

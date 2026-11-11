@@ -419,7 +419,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             media_exception=config.afk_media_exception,
         ),
         classifier=classifier,
-        goal_aligner=GoalAligner(strict_unrelated=config.strict_alignment),
+        goal_aligner=GoalAligner(strict_unrelated=config.strict_alignment, allow_rules=config.allow_rules, allow_rules_for=config.allow_rules_for),
         intent_engine=IntentEngine(client=ollama_client),
         intervention_engine=_intervention_engine(config),
         meme_intelligence=MemeIntelligence(client=ollama_client),
